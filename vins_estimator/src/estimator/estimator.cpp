@@ -294,24 +294,24 @@ void Estimator::processMeasurements()
             mBuf.lock();
             if(USE_IMU)
                 getIMUInterval(prevTime, curTime, accVector, gyrVector);
-
+            //get IMU data between prev - cur time
             featureBuf.pop();
             mBuf.unlock();
 
             if(USE_IMU)
             {
-                if(!initFirstPoseFlag)
+                if(!initFirstPoseFlag) // Init First Frame
                     initFirstIMUPose(accVector);
                 for(size_t i = 0; i < accVector.size(); i++)
                 {
                     double dt;
                     if(i == 0)
-                        dt = accVector[i].first - prevTime;
+                        dt = accVector[i].first - prevTime; //First IMU frame dt
                     else if (i == accVector.size() - 1)
-                        dt = curTime - accVector[i - 1].first;
+                        dt = curTime - accVector[i - 1].first; // Last IMU frame dt
                     else
                         dt = accVector[i].first - accVector[i - 1].first;
-                    processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second);
+                    processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second); //preintergration/ tmp would be stored in pre_integrations and tmp_pre_integrations
                 }
             }
             mProcess.lock();

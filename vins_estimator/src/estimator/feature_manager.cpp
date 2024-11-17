@@ -268,7 +268,7 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
             if (it_per_id.estimated_depth > 0)
             {
                 int index = frameCnt - it_per_id.start_frame;
-                if((int)it_per_id.feature_per_frame.size() >= index + 1)
+                if((int)it_per_id.feature_per_frame.size() >= index + 1) //constant tracking point
                 {
                     Vector3d ptsInCam = ric[0] * (it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth) + tic[0];
                     Vector3d ptsInWorld = Rs[it_per_id.start_frame] * ptsInCam + Ps[it_per_id.start_frame];
