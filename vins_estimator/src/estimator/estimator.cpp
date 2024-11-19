@@ -574,7 +574,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         last_R0 = Rs[0];
         last_P0 = Ps[0];
         updateLatestStates();
-    }  
+    }
 }
 
 bool Estimator::initialStructure()

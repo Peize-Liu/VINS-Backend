@@ -77,6 +77,8 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
 
         if (it == feature.end())
         {
+            //debug check frame_count
+            // printf()
             feature.push_back(FeaturePerId(feature_id, frame_count));
             feature.back().feature_per_frame.push_back(f_per_fra);
             new_feature_num++;
