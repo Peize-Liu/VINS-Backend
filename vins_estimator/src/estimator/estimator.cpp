@@ -10,6 +10,7 @@
 #include "estimator.h"
 #include "../utility/visualization.h"
 
+
 Estimator::Estimator(): f_manager{Rs}
 {
     ROS_INFO("init begins");
@@ -371,7 +372,7 @@ void Estimator::initFirstPose(Eigen::Vector3d p, Eigen::Matrix3d r)
     initR = r;
 }
 
-
+//TODO::processIMU change to GTSAM preintegration
 void Estimator::processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
     if (!first_imu)
@@ -864,6 +865,35 @@ void Estimator::vector2double()
     para_Td[0][0] = td;
 }
 
+void Estimator::vector2gtsamValues(){
+#if 0
+    for(int i =0; i <=WINDOW_SIZE; i++){
+        //eigen to gtsam
+        gtsam::Rot3 rot(Rs[i]);
+        gtsam::Point3 pos(Ps[i].x(), Ps[i].y(), Ps[i].z());
+        gtsam::Pose3 pose(rot, pos);
+        gtsam_poses.emplace_back(pose);
+        if (USE_IMU){
+            gtsam::Vector3 vel(Vs[i].x(), Vs[i].y(), Vs[i].z());
+            gtsam::imuBias::ConstantBias bias(Vector3d(Bas[i].x(), Bas[i].y(), Bas[i].z()), Vector3d(Bgs[i].x(), Bgs[i].y(), Bgs[i].z()));
+            gtsam_speed.emplace_back(vel);
+            gtsam_imu_biases.emplace_back(bias);
+        }
+    }
+    for(int i = 0; i < NUM_OF_CAM; i++){
+        gtsam::Rot3 ric_rot(ric[i]);
+        gtsam::Point3 tic_point(tic[i].x(), tic[i].y(), tic[i].z());
+        gtsam::Pose3 extrinsic(ric_rot, tic_point);
+    }
+    //only optimize detph of feature points
+    auto features = f_manager.getInverseDepthWithXY();
+    //features to gtsam features
+
+    //optimize time offset
+    para_Td[0][0] = td;
+#endif
+}
+
 void Estimator::double2vector()
 {
     Vector3d origin_R0 = Utility::R2ypr(Rs[0]);
@@ -952,6 +982,58 @@ void Estimator::double2vector()
 
 }
 
+void Estimator::gtsamValues2vector(){
+    #if 0
+    Vector3d origin_R0 = Utility::R2ypr(Rs[0]);
+    Vector3d origin_P0 = Ps[0];
+
+    if (failure_occur){
+        origin_R0 = Utility::R2ypr(last_R0);
+        origin_P0 = last_P0;
+        failure_occur = 0;
+    }
+
+    if(USE_IMU){
+        Vector3d origin_R00 = gtsam_poses[0].rotation().ypr();
+        double y_diff = origin_R0.x() - origin_R00.x();
+
+        Matrix3d rot_diff = Utility::ypr2R(Vector3d(y_diff, 0, 0));
+        if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0){
+            ROS_DEBUG("euler singular point!");
+            rot_diff = Rs[0] * gtsam_poses[0].rotation().matrix().transpose();
+        }
+        for (int i = 0; i <= WINDOW_SIZE; i++){
+            Rs[i] = rot_diff * gtsam_poses[i].rotation().matrix();
+            Ps[i] = rot_diff * (gtsam_poses[i].translation().vector() - gtsam_poses[0].translation().vector()) + origin_P0;
+            Vs[i] = rot_diff * gtsam_speed[i];
+            Bas[i] = gtsam_imu_biases[i].gyroscope();
+            Bgs[i] = gtsam_imu_biases[i].accelerometer();
+        }
+    } else {
+        for (int i = 0; i <= WINDOW_SIZE; i++){
+            Rs[i] = gtsam_poses[i].rotation().matrix();
+            Ps[i] = gtsam_poses[i].translation().vector();
+        }
+    }
+    if(USE_IMU){
+        for (int i = 0; i < NUM_OF_CAM; i++){
+            tic[i] = gtsam_extrinsics[i].translation();
+            ric[i] = gtsam_extrinsics[i].rotation().toRotationMatrix();
+        }
+    }
+
+    VectorXd dep = f_manager.getDepthVector();
+    // inverse depth
+    for (int i = 0; i < f_manager.getFeatureCount(); i++){
+        dep(i) = gtsam_features[i][2];
+    }
+    f_manager.setDepth(dep);
+    if(USE_IMU){
+        td = para_Td[0][0];
+    }
+    #endif
+}
+
 bool Estimator::failureDetection()
 {
     return false;
@@ -1011,7 +1093,7 @@ void Estimator::optimization()
     //loss_function = NULL;
     loss_function = new ceres::HuberLoss(1.0);
     //loss_function = new ceres::CauchyLoss(1.0 / FOCAL_LENGTH);
-    //ceres::LossFunction* loss_function = new ceres::HuberLoss(1.0);
+    //ceres::LossFunction* loss_function = new ceres::HuberLoss(1.0); 
     for (int i = 0; i < frame_count + 1; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
@@ -1324,6 +1406,95 @@ void Estimator::optimization()
     }
     //printf("whole marginalization costs: %f \n", t_whole_marginalization.toc());
     //printf("whole time for ceres: %f \n", t_whole.toc());
+}
+
+//GTSAM backend
+//TODO::GTSAM
+void Estimator::optimizationGTSAM(){
+#if 0
+    using namespace gtsam;
+    using symbol_shorthand::X; //Pose
+    using symbol_shorthand::V; //Velocity
+    using symbol_shorthand::B; //IMU bias
+    using symbol_shorthand::L; //Map point
+
+    TicToc t_whole, t_prepare;
+    vector2gtsamValues();
+    gtsam::NonlinearFactorGraph graph;
+    gtsam::Values initialEstimate;
+    gtsam::ISAM2Params parameters;
+    parameters.relinearizeThreshold = 0.01;
+    parameters.relinearizeSkip = 1;
+    ISAM2 isam(parameters);
+    // BA sldwin status
+    if(frame_count < WINDOW_SIZE){
+        printf("[GTSAM]frame_count: %d \n", frame_count);
+        return;
+    }
+    // add pose nodes
+    for (int i = 0; i <= frame_count; i++){
+        gtsam::Pose3 pose(Rs[i], Ps[i]);
+        graph.add(PriorFactor<Pose3>(X(i), pose, noiseModel::Unit::Create(6)));
+        initialEstimate.insert(X(i), pose);
+        if(USE_IMU){
+            initialEstimate.insert(V(i), Vs[i]);
+            initialEstimate.insert(B(i), imuBias::ConstantBias(Vector3(Bas[i]), Vector3(Bgs[i])));
+        }
+    }
+    // TODO::add imu pretergration
+    for(int i = 1; i <= frame_count; i++){
+        if(pre_integrations[i]->sum_dt < 10.0){
+            continue;
+        }
+        // graph.add(ImuFactor(X(i-1), V(i-1), X(i), V(i), B(i-1), *pre_integrations[i]));
+    }
+
+
+    // TODO::add feature
+    int feature_index = -1;
+    for(auto & it_per_id :f_manager.feature){
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (it_per_id.used_num < 4){
+            continue;
+        }
+        ++feature_index;
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+        if (imu_i != 0){
+            continue;
+        }
+        Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+        for(auto & it_per_frame : it_per_id.feature_per_frame){
+            imu_j++;
+            if(imu_i != imu_j){ //one point reporject on two frames
+                
+            }
+            if(STEREO && it_per_frame.is_stereo){
+                Vector3d pts_j_right = it_per_frame.pointRight;
+                if(imu_i != imu_j){
+                    //one point reproject on two frames
+                }else{
+                    //one point reproject on another cam
+                }
+            }
+        }
+    }
+    // optimize
+    isam.update(graph, initialEstimate);
+    gtsam::Values currentEstimate = isam.calculateEstimate();
+    // update
+    for(int i = 0; i <= frame_count; i++){
+        // gtsam::Pose3 pose = currentEstimate.at<Pose3>(X(i));
+        // Rs[i] = pose.rotation().matrix();
+        // Ps[i] = pose.translation();
+    }
+    for(int i = 1; i <= frame_count; i++){
+        // Vs[i] = currentEstimate.at<Vector3>(V(i));
+        // auto bias = currentEstimate.at<imuBias::ConstantBias>(B(i));
+        // Bas[i] = bias.accelerometer();
+        // Bgs[i] = bias.gyroscope();
+    }
+    // marginalization
+#endif
 }
 
 void Estimator::slideWindow()

@@ -1,6 +1,7 @@
 FROM ros:kinetic-perception
 
 ENV CERES_VERSION="1.12.0"
+ENV GTSAM_VERSION="3.2.2"
 ENV CATKIN_WS=/root/catkin_ws
 
       # set up thread number for building
@@ -27,6 +28,15 @@ RUN   if [ "x$(nproc)" = "x1" ] ; then export USE_PROC=1 ; \
       make -j$(USE_PROC) install && \
       rm -rf ../../ceres-solver && \
       mkdir -p $CATKIN_WS/src/VINS-Fusion/
+
+#install GTSAM
+RUN  git clone https://bitbucket.org/gtborg/gtsam.git && \
+      cd gtsam && \
+      git checkout tags/${GTSAM_VERSION} && \
+      mkdir build && cd build && \
+      cmake .. && \
+      make -j$(USE_PROC) install && \
+      rm -rf ../../gtsam
 
 # Copy VINS-Fusion
 COPY ./ $CATKIN_WS/src/VINS-Fusion/

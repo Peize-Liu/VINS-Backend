@@ -196,6 +196,20 @@ VectorXd FeatureManager::getDepthVector()
     return dep_vec;
 }
 
+//GTSAM backend get x, y, and inverse z Change to list maybe better solution
+std::vector<Vector3d>  FeatureManager::getInverseDepthWithXY(){
+    std::vector<Vector3d> dep_vec;
+    int feature_index = -1;
+    for (auto &it_per_id : feature)
+    {
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (it_per_id.used_num < 4)
+            continue;
+        dep_vec.emplace_back(Vector3d(it_per_id.feature_per_frame[0].point.x(), it_per_id.feature_per_frame[0].point.y(), 1.0 / it_per_id.estimated_depth));
+    }
+    return dep_vec;
+}
+
 
 void FeatureManager::triangulatePoint(Eigen::Matrix<double, 3, 4> &Pose0, Eigen::Matrix<double, 3, 4> &Pose1,
                         Eigen::Vector2d &point0, Eigen::Vector2d &point1, Eigen::Vector3d &point_3d)

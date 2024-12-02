@@ -16,6 +16,7 @@
 #include <ceres/ceres.h>
 #include <unordered_map>
 #include <queue>
+#include <vector>
 #include <opencv2/core/eigen.hpp>
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
@@ -36,6 +37,14 @@
 #include "../factor/projectionOneFrameTwoCamFactor.h"
 #include "../featureTracker/feature_tracker.h"
 
+//GTSAM solver
+#include <gtsam/navigation/ImuFactor.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
+#include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/inference/Symbol.h>
 
 class Estimator
 {
@@ -63,8 +72,11 @@ class Estimator
     void slideWindowNew();
     void slideWindowOld();
     void optimization();
+    void optimizationGTSAM();
     void vector2double();
+    void vector2gtsamValues();
     void double2vector();
+    void gtsamValues2vector();
     bool failureDetection();
     bool getIMUInterval(double t0, double t1, vector<pair<double, Eigen::Vector3d>> &accVector, 
                                               vector<pair<double, Eigen::Vector3d>> &gyrVector);
@@ -156,6 +168,16 @@ class Estimator
     double para_Retrive_Pose[SIZE_POSE];
     double para_Td[1][1];
     double para_Tr[1][1];
+
+    //gtsam
+    std::vector<gtsam::Pose3> gtsam_poses;
+    std::vector<gtsam::Vector3> gtsam_speed;
+    std::vector<gtsam::imuBias::ConstantBias> gtsam_imu_biases;
+    std::vector<gtsam::Pose3> gtsam_extrinsics;
+    std::vector<gtsam::Point3> gtsam_features;
+    gtsam::Pose3 gtsam_extrinsic[2];
+    gtsam::Pose3 gtsam_retrive_pose;
+    // gtsam::Cal3_S2Stereo::shared_ptr gtsam_calib;
 
     int loop_window_index;
 

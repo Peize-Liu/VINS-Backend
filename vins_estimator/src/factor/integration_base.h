@@ -12,7 +12,9 @@
 #include "../utility/utility.h"
 #include "../estimator/parameters.h"
 
+#include <gtsam/navigation/ImuFactor.h>
 #include <ceres/ceres.h>
+#include <memory.h>
 using namespace Eigen;
 
 class IntegrationBase
@@ -34,6 +36,12 @@ class IntegrationBase
         noise.block<3, 3>(9, 9) =  (GYR_N * GYR_N) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(12, 12) =  (ACC_W * ACC_W) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(15, 15) =  (GYR_W * GYR_W) * Eigen::Matrix3d::Identity();
+        //GTSAM
+        auto params = gtsam::PreintegratedImuMeasurements::Params::MakeSharedU(9.81);
+        params->accelerometerCovariance = Eigen::Matrix3d::Identity() * ACC_N * ACC_N;
+        params->gyroscopeCovariance = Eigen::Matrix3d::Identity() * GYR_N * GYR_N;
+        params->integrationCovariance = Eigen::Matrix3d::Identity() * ACC_W * ACC_W;
+        pre_integration = std::make_shared<gtsam::PreintegratedImuMeasurements>(params,linearized_ba, linearized_bg);
     }
 
     void push_back(double dt, const Eigen::Vector3d &acc, const Eigen::Vector3d &gyr)
@@ -42,6 +50,7 @@ class IntegrationBase
         acc_buf.push_back(acc);
         gyr_buf.push_back(gyr);
         propagate(dt, acc, gyr);
+        pre_integration->integrateMeasurement(acc, gyr, dt);
     }
 
     void repropagate(const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
@@ -58,6 +67,7 @@ class IntegrationBase
         covariance.setZero();
         for (int i = 0; i < static_cast<int>(dt_buf.size()); i++)
             propagate(dt_buf[i], acc_buf[i], gyr_buf[i]);
+        pre_integration->resetIntegrationAndSetBias(_linearized_ba, _linearized_bg);
     }
 
     void midPointIntegration(double _dt, 
@@ -214,7 +224,7 @@ class IntegrationBase
     std::vector<double> dt_buf;
     std::vector<Eigen::Vector3d> acc_buf;
     std::vector<Eigen::Vector3d> gyr_buf;
-
+    std::shared_ptr<gtsam::ImuFactorPreintegratedMeasurements> pre_integration;
 };
 /*
 

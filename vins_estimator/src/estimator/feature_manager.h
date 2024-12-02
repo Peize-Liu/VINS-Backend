@@ -92,6 +92,7 @@ class FeatureManager
     void removeFailures();
     void clearDepth();
     VectorXd getDepthVector();
+    std::vector<Vector3d> getInverseDepthWithXY(int32_t feature_size);
     void triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[]);
     void triangulatePoint(Eigen::Matrix<double, 3, 4> &Pose0, Eigen::Matrix<double, 3, 4> &Pose1,
                             Eigen::Vector2d &point0, Eigen::Vector2d &point1, Eigen::Vector3d &point_3d);
