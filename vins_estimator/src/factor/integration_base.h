@@ -15,6 +15,12 @@
 #include <ceres/ceres.h>
 using namespace Eigen;
 
+//gtsam
+#include <gtsam/navigation/ImuFactor.h>
+#include <gtsam/geometry/Point3.h>
+#include <gtsam/geometry/Rot3.h>
+#include <memory>
+
 class IntegrationBase
 {
   public:
@@ -214,7 +220,7 @@ class IntegrationBase
     std::vector<double> dt_buf;
     std::vector<Eigen::Vector3d> acc_buf;
     std::vector<Eigen::Vector3d> gyr_buf;
-
+    // std::shared_ptr<gtsam::PreintegratedImuMeasurements> pre_integration;
 };
 /*
 
