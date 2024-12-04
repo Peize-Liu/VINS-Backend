@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.1)
 project(vins)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11")
+set(CMAKE_CXX_FLAGS "--std=c++14")
 #-DEIGEN_USE_MKL_ALL")
 
 set(CMAKE_CXX_STANDARD 14)
@@ -23,8 +23,8 @@ find_package(OpenCV REQUIRED)
 # message(WARNING "OpenCV_VERSION: ${OpenCV_VERSION}")
 
 find_package(Ceres REQUIRED)
-find_package(GTSAM 3.2.2 REQUIRED)
-find_package(Eigen3 3.3.3 REQUIRED)
+find_package(GTSAM 4.2.0 REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS})
 
@@ -58,11 +58,11 @@ target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRAR
 
 
 add_executable(vins_node src/rosNodeTest.cpp)
-target_link_libraries(vins_node vins_lib) 
+target_link_libraries(vins_node vins_lib gtsam)
 
 add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
-target_link_libraries(kitti_odom_test vins_lib) 
+target_link_libraries(kitti_odom_test vins_lib gtsam)
 
 add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
-target_link_libraries(kitti_gps_test vins_lib) 
+target_link_libraries(kitti_gps_test vins_lib gtsam)
 
