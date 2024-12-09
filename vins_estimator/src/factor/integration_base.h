@@ -19,6 +19,7 @@ using namespace Eigen;
 #include <gtsam/navigation/ImuFactor.h>
 #include <gtsam/geometry/Point3.h>
 #include <gtsam/geometry/Rot3.h>
+#include <gtsam/navigation/PreintegrationParams.h>
 #include <memory>
 
 class IntegrationBase
@@ -40,6 +41,21 @@ class IntegrationBase
         noise.block<3, 3>(9, 9) =  (GYR_N * GYR_N) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(12, 12) =  (ACC_W * ACC_W) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(15, 15) =  (GYR_W * GYR_W) * Eigen::Matrix3d::Identity();
+
+        //gtsam
+        auto param = gtsam::PreintegratedImuMeasurements::Params::MakeSharedU(9.81);
+        param->accelerometerCovariance = ACC_N * ACC_N * gtsam::I_3x3;
+        param->gyroscopeCovariance = GYR_N * GYR_N * gtsam::I_3x3;
+        param->integrationCovariance = gtsam::I_3x3;
+        // param->biasAccCovariance = ACC_W * ACC_W * gtsam::I_3x3;
+        // param->biasOmegaCovariance = GYR_W * GYR_W * gtsam::I_3x3;
+        // param->biasAccOmegaInt = gtsam::I_3x3;
+        
+        pre_integration = std::make_shared<gtsam::PreintegratedImuMeasurements>(param);
+        if (pre_integration == nullptr)
+        {
+            ROS_ERROR("[GTSAM] pre_integration is nullptr");
+        }
     }
 
     void push_back(double dt, const Eigen::Vector3d &acc, const Eigen::Vector3d &gyr)
@@ -48,6 +64,11 @@ class IntegrationBase
         acc_buf.push_back(acc);
         gyr_buf.push_back(gyr);
         propagate(dt, acc, gyr);
+
+        //gtsam
+        gtsam::Vector3 gtsam_acc(acc(0), acc(1), acc(2));
+        gtsam::Vector3 gtsam_gyr(gyr(0), gyr(1), gyr(2));
+        pre_integration->integrateMeasurement(gtsam_acc, gtsam_gyr, dt);
     }
 
     void repropagate(const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
@@ -64,6 +85,15 @@ class IntegrationBase
         covariance.setZero();
         for (int i = 0; i < static_cast<int>(dt_buf.size()); i++)
             propagate(dt_buf[i], acc_buf[i], gyr_buf[i]);
+        
+        //gtsam
+        pre_integration->resetIntegration();
+        for (int i = 0; i < static_cast<int>(dt_buf.size()); i++)
+        {
+            gtsam::Vector3 gtsam_acc(acc_buf[i](0), acc_buf[i](1), acc_buf[i](2));
+            gtsam::Vector3 gtsam_gyr(gyr_buf[i](0), gyr_buf[i](1), gyr_buf[i](2));
+            pre_integration->integrateMeasurement(gtsam_acc, gtsam_gyr, dt_buf[i]);
+        }
     }
 
     void midPointIntegration(double _dt, 
@@ -220,7 +250,23 @@ class IntegrationBase
     std::vector<double> dt_buf;
     std::vector<Eigen::Vector3d> acc_buf;
     std::vector<Eigen::Vector3d> gyr_buf;
-    // std::shared_ptr<gtsam::PreintegratedImuMeasurements> pre_integration;
+
+    //GTSAM 
+    std::shared_ptr<gtsam::PreintegratedImuMeasurements> pre_integration;
+    // std::vector<double> dt_buf;
+    // std::vector<gtsam::Vector3> acc_buf;
+    // std::vector<gtsam::Vector3> gyr_buf;
+    // gtsam::Vector3 linearized_ba;
+    // gtsam::Vector3 linearized_bg;
+    // gtsam::Matrix jacobian;
+    // gtsam::Matrix covariance;
+    // double sum_dt;
+    // gtsam::Vector3 acc_0;
+    // gtsam::Vector3 gyr_0;
+    // gtsam::Vector3 delta_p;
+    // gtsam::Rot3 delta_q;
+    // gtsam::Vector3 delta_v;
+
 };
 /*
 
