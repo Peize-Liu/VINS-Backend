@@ -61,17 +61,22 @@ class FeaturePerFrame
 class FeaturePerId
 {
   public:
+    typedef enum {
+      FEATURE_DEPTH_UNINITIALIZED = 0,
+      FEATURE_DEPTH_VALID = 1,
+      FEATURE_DEPTH_INVALID = 2,
+    } SolveFlag;
+    
     const int feature_id;
     int start_frame;
     vector<FeaturePerFrame> feature_per_frame;
     int used_num;
     double estimated_depth;
-    int solve_flag; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
+    SolveFlag solve_flag = FEATURE_DEPTH_UNINITIALIZED ; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
 
     FeaturePerId(int _feature_id, int _start_frame)
         : feature_id(_feature_id), start_frame(_start_frame),
-          used_num(0), estimated_depth(-1.0), solve_flag(0)
-    {
+          used_num(0), estimated_depth(-1.0), solve_flag(FEATURE_DEPTH_UNINITIALIZED){
     }
 
     int endFrame();
@@ -86,6 +91,10 @@ class FeatureManager
     void clearState();
     int getFeatureCount();
     bool addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td);
+
+    bool isKeyFrame(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td);
+    bool addKeyframeFeature(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td);
+
     vector<pair<Vector3d, Vector3d>> getCorresponding(int frame_count_l, int frame_count_r);
     //void updateDepth(const VectorXd &x);
     void setDepth(const VectorXd &x);
@@ -102,16 +111,19 @@ class FeatureManager
     void removeBack();
     void removeFront(int frame_count);
     void removeOutlier(set<int> &outlierIndex);
-    list<FeaturePerId> feature;
-    int last_track_num;
-    double last_average_parallax;
-    int new_feature_num;
-    int long_track_num;
+    list<FeaturePerId> features_;
+    std::map<int,FeaturePerId> feature_map_;
+    int last_track_num_ = 0;
+    double last_average_parallax_ =0.0;
+    int new_feature_num_;
+    int long_track_num_;
 
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);
     const Matrix3d *Rs;
     Matrix3d ric[2];
+    //parameter
+    int32_t long_track_threshold_ = 4;
 };
 
 #endif

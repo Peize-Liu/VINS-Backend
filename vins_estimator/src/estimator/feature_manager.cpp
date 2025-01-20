@@ -31,34 +31,50 @@ void FeatureManager::setRic(Matrix3d _ric[])
 
 void FeatureManager::clearState()
 {
-    feature.clear();
+    // features_.clear();
+    feature_map_.clear();
 }
 
 int FeatureManager::getFeatureCount()
 {
     int cnt = 0;
-    for (auto &it : feature)
+    // for (auto &it : features_)
+    // {
+    //     it.used_num = it.feature_per_frame.size();
+    //     if (it.used_num >= 4)
+    //     {
+    //         cnt++;
+    //     }
+    // }
+
+    for (auto &it : feature_map_)
     {
-        it.used_num = it.feature_per_frame.size();
-        if (it.used_num >= 4)
+        it.second.used_num = it.second.feature_per_frame.size();
+        if (it.second.used_num >= 4)
         {
             cnt++;
         }
     }
+
     return cnt;
 }
 
-
+// change to map
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("input feature: %d", (int)image.size());
     ROS_DEBUG("num of feature: %d", getFeatureCount());
+
     double parallax_sum = 0;
     int parallax_num = 0;
-    last_track_num = 0;
-    last_average_parallax = 0;
-    new_feature_num = 0;
-    long_track_num = 0;
+
+    //reset counter
+    last_track_num_ = 0;
+    last_average_parallax_ = 0;
+    new_feature_num_ = 0;
+    long_track_num_ = 0;
+
+
     for (auto &id_pts : image)
     {
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
@@ -70,34 +86,34 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         }
 
         int feature_id = id_pts.first;
-        auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
+
+        //TODO:: change it into a map
+        auto it = find_if(features_.begin(), features_.end(), [feature_id](const FeaturePerId &it)
                           {
             return it.feature_id == feature_id;
                           });
 
-        if (it == feature.end())
+        if (it == features_.end())
         {
             //debug check frame_count
             // printf()
-            feature.push_back(FeaturePerId(feature_id, frame_count));
-            feature.back().feature_per_frame.push_back(f_per_fra);
-            new_feature_num++;
+            features_.push_back(FeaturePerId(feature_id, frame_count));
+            features_.back().feature_per_frame.push_back(f_per_fra);
+            new_feature_num_++;
         }
         else if (it->feature_id == feature_id)
         {
             it->feature_per_frame.push_back(f_per_fra);
-            last_track_num++;
+            last_track_num_++;
             if( it-> feature_per_frame.size() >= 4)
-                long_track_num++;
+                long_track_num_++;
         }
     }
 
-    //if (frame_count < 2 || last_track_num < 20)
-    //if (frame_count < 2 || last_track_num < 20 || new_feature_num > 0.5 * last_track_num)
-    if (frame_count < 2 || last_track_num < 20 || long_track_num < 40 || new_feature_num > 0.5 * last_track_num)
+    if (frame_count < 2 || last_track_num_ < 20 || long_track_num_ < 40 || new_feature_num_ > 0.5 * last_track_num_)
         return true;
 
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : features_)
     {
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
@@ -115,36 +131,207 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     {
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
         ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
-        last_average_parallax = parallax_sum / parallax_num * FOCAL_LENGTH;
+        last_average_parallax_ = parallax_sum / parallax_num * FOCAL_LENGTH;
         return parallax_sum / parallax_num >= MIN_PARALLAX;
     }
+}
+
+bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
+{
+    ROS_DEBUG("input feature: %d", (int)image.size());
+    ROS_DEBUG("num of feature: %d", getFeatureCount());
+
+    double parallax_sum = 0;
+    int parallax_num = 0;
+
+    //reset counter
+    last_track_num_ = 0;
+    last_average_parallax_ = 0;
+    new_feature_num_ = 0;
+    long_track_num_ = 0;
+
+
+    for (auto &id_pts : image)
+    {
+        FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
+        assert(id_pts.second[0].first == 0);
+        if(id_pts.second.size() == 2){
+            f_per_fra.rightObservation(id_pts.second[1].second);
+            assert(id_pts.second[1].first == 1);
+        }
+
+        int feature_id = id_pts.first;
+
+        if (feature_map_.find(feature_id) == feature_map_.end()){
+            feature_map_[feature_id] = FeaturePerId(feature_id, frame_count);
+            feature_map_[feature_id].feature_per_frame.push_back(f_per_fra);
+            new_feature_num_++;
+        } else {
+            feature_map_[feature_id].feature_per_frame.push_back(f_per_fra);
+            last_track_num_++;
+            if( feature_map_[feature_id].feature_per_frame.size() >= 4)
+                long_track_num_++;
+        }
+    }
+
+    if (frame_count < 2 || last_track_num_ < 20 || long_track_num_ < 40 || new_feature_num_ > 0.5 * last_track_num_)
+        return true;
+
+    for (auto &it_per_id : feature_map_){
+        if (it_per_id.second.start_frame <= frame_count - 2 &&
+            it_per_id.second.start_frame + int(it_per_id.second.feature_per_frame.size()) - 1 >= frame_count - 1)
+        {
+            parallax_sum += compensatedParallax2(it_per_id.second, frame_count);
+            parallax_num++;
+        }
+    }
+
+    if (parallax_num == 0)
+    {
+        return true;
+    }
+    else
+    {
+        ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
+        ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
+        last_average_parallax_ = parallax_sum / parallax_num * FOCAL_LENGTH;
+        return parallax_sum / parallax_num >= MIN_PARALLAX;
+    }
+}
+
+bool FeatureManager::isKeyFrame(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>> &features, double td){
+    double parallax_sum = 0;
+    int parallax_num = 0;
+
+    //reset counter
+    last_track_num_ = 0;
+    last_average_parallax_ = 0;
+    new_feature_num_ = 0;
+    long_track_num_ = 0;
+
+    //TODO:: in addKeyyframeFeature we actually go threrough all the features again, this might be redundant
+    for(auto &id_pts : features){
+        int feature_id = id_pts.first;
+
+        //use list first, future change to map
+        // auto it = find_if(features_.begin(), features_.end(), [feature_id](const FeaturePerId &it){
+        //     return it.feature_id == feature_id;
+        // });
+
+        // if (it == features_.end()){
+        //     new_feature_num_++;
+        // }else if (it->feature_id == feature_id){
+        //     last_track_num_++;
+        //     if(it->feature_per_frame.size() >= (long_track_threshold_-1)){
+        //         long_track_num_++;
+        //     }
+        // }
+
+        if (feature_map_.find(feature_id) == feature_map_.end()){
+            new_feature_num_++;
+        } else {
+            last_track_num_++;
+            if(feature_map_[feature_id].feature_per_frame.size() >= (long_track_threshold_-1)){
+                long_track_num_++;
+            }
+        }
+    }
+
+    //check if it is a keyframe
+    if (frame_count < 2 || last_track_num_ < 20 || long_track_num_ < 40 || new_feature_num_ > 0.5 * last_track_num_){
+        return true;
+    }
+
+
+    // for (auto &it_per_id : features_){
+    //     if (it_per_id.start_frame <= frame_count - 2 &&
+    //         it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1){
+    //         parallax_sum += compensatedParallax2(it_per_id, frame_count);
+    //         parallax_num++;
+    //     }
+    // }
+
+    for (auto &it_per_id : feature_map_){
+        if (it_per_id.second.start_frame <= frame_count - 2 &&
+            it_per_id.second.start_frame + int(it_per_id.second.feature_per_frame.size()) - 1 >= frame_count - 1){
+            parallax_sum += compensatedParallax2(it_per_id.second, frame_count);
+            parallax_num++;
+        }
+    }
+
+    if (parallax_num == 0){
+        return true;
+    } else {
+        ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
+        ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
+        last_average_parallax_ = parallax_sum / parallax_num * FOCAL_LENGTH;
+        return parallax_sum / parallax_num >= MIN_PARALLAX;
+    }
+
+}
+
+bool FeatureManager::addKeyframeFeature(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &features, double td){
+    for (auto & feature: features){
+        FeaturePerFrame f_per_fra(feature.second[0].second, td);
+        assert(feature.second[0].first == 0);
+        if(feature.second.size() == 2){
+            f_per_fra.rightObservation(feature.second[1].second);
+            assert(feature.second[1].first == 1);
+        }
+
+        int feature_id = feature.first;
+
+        if (feature_map_.find(feature_id) == feature_map_.end()){
+            feature_map_[feature_id] = FeaturePerId(feature_id, frame_count);
+            feature_map_[feature_id].feature_per_frame.push_back(f_per_fra);
+        } else {
+            feature_map_[feature_id].feature_per_frame.push_back(f_per_fra);
+        }
+    }
+
 }
 
 vector<pair<Vector3d, Vector3d>> FeatureManager::getCorresponding(int frame_count_l, int frame_count_r)
 {
     vector<pair<Vector3d, Vector3d>> corres;
-    for (auto &it : feature)
-    {
-        if (it.start_frame <= frame_count_l && it.endFrame() >= frame_count_r)
-        {
-            Vector3d a = Vector3d::Zero(), b = Vector3d::Zero();
-            int idx_l = frame_count_l - it.start_frame;
-            int idx_r = frame_count_r - it.start_frame;
+    // for (auto &it : features_)
+    // {
+    //     if (it.start_frame <= frame_count_l && it.endFrame() >= frame_count_r)
+    //     {
+    //         Vector3d a = Vector3d::Zero(), b = Vector3d::Zero();
+    //         int idx_l = frame_count_l - it.start_frame;
+    //         int idx_r = frame_count_r - it.start_frame;
 
-            a = it.feature_per_frame[idx_l].point;
+    //         a = it.feature_per_frame[idx_l].point;
 
-            b = it.feature_per_frame[idx_r].point;
+    //         b = it.feature_per_frame[idx_r].point;
             
+    //         corres.push_back(make_pair(a, b));
+    //     }
+    // }
+
+    for (auto &it : feature_map_)
+    {
+        if (it.second.start_frame <= frame_count_l && it.second.endFrame() >= frame_count_r)
+        {
+            Vector3d a = Vector3d::Zero(), b = Vector3d::Zero;
+            int idx_l = frame_count_l - it.second.start_frame;
+            int idx_r = frame_count_r - it.second.start_frame;
+
+            a = it.second.feature_per_frame[idx_l].point;
+            b = it.second.feature_per_frame[idx_r].point;
+
             corres.push_back(make_pair(a, b));
         }
     }
+
     return corres;
 }
 
 void FeatureManager::setDepth(const VectorXd &x)
 {
     int feature_index = -1;
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : features_)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (it_per_id.used_num < 4)
@@ -161,21 +348,60 @@ void FeatureManager::setDepth(const VectorXd &x)
     }
 }
 
-void FeatureManager::removeFailures()
+void FeatureManager::setDepth(std::map<int, double> &depth_map)
 {
-    for (auto it = feature.begin(), it_next = feature.begin();
-         it != feature.end(); it = it_next)
+    for (auto &it_per_id : feature_map_)
     {
-        it_next++;
-        if (it->solve_flag == 2)
-            feature.erase(it);
+        it_per_id.second.used_num = it_per_id.second.feature_per_frame.size();
+        if (it_per_id.second.used_num < 4)
+            continue;
+
+        if (depth_map.find(it_per_id.first) != depth_map.end())
+        {
+            it_per_id.second.estimated_depth = depth_map[it_per_id.first];
+            if (it_per_id.second.estimated_depth < 0)
+            {
+                it_per_id.second.solve_flag = SolveFlag::FEATURE_DEPTH_INVALID;
+            }
+            else
+                it_per_id.second.solve_flag = SolveFlag::FEATURE_DEPTH_VALID;
+        }
     }
 }
 
-void FeatureManager::clearDepth()
-{
-    for (auto &it_per_id : feature)
-        it_per_id.estimated_depth = -1;
+// void FeatureManager::removeFailures()
+// {
+//     for (auto it = features_.begin(), it_next = features_.begin();
+//          it != features_.end(); it = it_next)
+//     {
+//         it_next++;
+//         if (it->solve_flag == 2)
+//             features_.erase(it);
+//     }
+// }
+
+void FeatureManager::removeFailures(){
+    for (auto it = feature_map_.begin(); it != feature_map_.end();){
+        if (it->second.solve_flag == FeaturePerId::FEATURE_DEPTH_INVALID){
+            feature_map_.erase(it++);
+        } else {
+            it++;
+        }
+    }
+}
+
+
+// void FeatureManager::clearDepth()
+// {
+//     for (auto &it_per_id : features_)
+//         it_per_id.estimated_depth = -1;
+// }
+
+void FeatureManager::clearDepth(){
+    for (auto &it_per_id : feature_map_){
+        it_per_id.second.estimated_depth = -1;
+    }
+
 }
 
 VectorXd FeatureManager::getDepthVector()
@@ -196,7 +422,21 @@ VectorXd FeatureManager::getDepthVector()
     return dep_vec;
 }
 
+void FeatureManager::getDepthVector(std::map<int, double> &depth_map)
+{
+    for (auto &it_per_id : feature_map_)
+    {
+        it_per_id.second.used_num = it_per_id.second.feature_per_frame.size();
+        if (it_per_id.second.used_num < 4)
+            continue;
+        if (it_per_id.second.solve_flag == FeaturePerId::FEATURE_DEPTH_VALID)
+        {
+            depth_map[it_per_id.first] = 1.0 / it_per_id.second.estimated_depth;
+        }
+    }
+}
 
+//TODO:: This two functions should be public function for all modules to use 
 void FeatureManager::triangulatePoint(Eigen::Matrix<double, 3, 4> &Pose0, Eigen::Matrix<double, 3, 4> &Pose1,
                         Eigen::Vector2d &point0, Eigen::Vector2d &point1, Eigen::Vector3d &point_3d)
 {
@@ -213,7 +453,7 @@ void FeatureManager::triangulatePoint(Eigen::Matrix<double, 3, 4> &Pose0, Eigen:
     point_3d(2) = triangulated_point(2) / triangulated_point(3);
 }
 
-
+//TODO:: This two functions should be public function for all modules to use 
 bool FeatureManager::solvePoseByPnP(Eigen::Matrix3d &R, Eigen::Vector3d &P, 
                                       vector<cv::Point2f> &pts2D, vector<cv::Point3f> &pts3D)
 {
@@ -258,6 +498,7 @@ bool FeatureManager::solvePoseByPnP(Eigen::Matrix3d &R, Eigen::Vector3d &P,
     return true;
 }
 
+
 void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[])
 {
 
@@ -265,7 +506,7 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
     {
         vector<cv::Point2f> pts2D;
         vector<cv::Point3f> pts3D;
-        for (auto &it_per_id : feature)
+        for (auto &it_per_id : features_)
         {
             if (it_per_id.estimated_depth > 0)
             {
@@ -301,9 +542,72 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
     }
 }
 
+void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[])
+{
+
+    if(frameCnt > 0)
+    {
+        vector<cv::Point2f> pts2D;
+        vector<cv::Point3f> pts3D;
+        // for (auto &it_per_id : feature)
+        // {
+        //     if (it_per_id.estimated_depth > 0)
+        //     {
+        //         int index = frameCnt - it_per_id.start_frame;
+        //         if((int)it_per_id.feature_per_frame.size() >= index + 1) //constant tracking point
+        //         {
+        //             Vector3d ptsInCam = ric[0] * (it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth) + tic[0];
+        //             Vector3d ptsInWorld = Rs[it_per_id.start_frame] * ptsInCam + Ps[it_per_id.start_frame];
+
+        //             cv::Point3f point3d(ptsInWorld.x(), ptsInWorld.y(), ptsInWorld.z());
+        //             cv::Point2f point2d(it_per_id.feature_per_frame[index].point.x(), it_per_id.feature_per_frame[index].point.y());
+        //             pts3D.push_back(point3d);
+        //             pts2D.push_back(point2d); 
+        //         }
+        //     }
+        // }
+
+        for (auto &it_per_id : feature_map_)
+        {
+            if (it_per_id.second.estimated_depth > 0)
+            {
+                int index = frameCnt - it_per_id.second.start_frame;
+                if((int)it_per_id.second.feature_per_frame.size() >= index + 1) //constant tracking point
+                {
+                    Vector3d ptsInCam = ric[0] * (it_per_id.second.feature_per_frame[0].point * it_per_id.second.estimated_depth) + tic[0];
+                    Vector3d ptsInWorld = Rs[it_per_id.second.start_frame] * ptsInCam + Ps[it_per_id.second.start_frame];
+
+                    cv::Point3f point3d(ptsInWorld.x(), ptsInWorld.y(), ptsInWorld.z());
+                    cv::Point2f point2d(it_per_id.second.feature_per_frame[index].point.x(), it_per_id.second.feature_per_frame[index].point.y());
+                    pts3D.push_back(point3d);
+                    pts2D.push_back(point2d); 
+                }
+            }
+        }
+    
+        Eigen::Matrix3d RCam;
+        Eigen::Vector3d PCam;
+        // trans to w_T_cam
+        RCam = Rs[frameCnt - 1] * ric[0];
+        PCam = Rs[frameCnt - 1] * tic[0] + Ps[frameCnt - 1];
+
+        if(solvePoseByPnP(RCam, PCam, pts2D, pts3D))
+        {
+            // trans to w_T_imu
+            Rs[frameCnt] = RCam * ric[0].transpose(); 
+            Ps[frameCnt] = -RCam * ric[0].transpose() * tic[0] + PCam;
+
+            Eigen::Quaterniond Q(Rs[frameCnt]);
+            //cout << "frameCnt: " << frameCnt <<  " pnp Q " << Q.w() << " " << Q.vec().transpose() << endl;
+            //cout << "frameCnt: " << frameCnt << " pnp P " << Ps[frameCnt].transpose() << endl;
+        }
+    }
+}
+
+
 void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[])
 {
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : features_)
     {
         if (it_per_id.estimated_depth > 0)
             continue;
@@ -347,7 +651,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
             */
             continue;
         }
-        else if(it_per_id.feature_per_frame.size() > 1)
+        else if(it_per_id.feature_per_frame.size() == 2)
         {
             int imu_i = it_per_id.start_frame;
             Eigen::Matrix<double, 3, 4> leftPose;
@@ -381,61 +685,234 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
                                                             ptsGt.x(), ptsGt.y(), ptsGt.z());
             */
             continue;
-        }
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (it_per_id.used_num < 4)
+        } else if (it_per_id.feature_per_frame.size() > 4){
+            //triangulate point with SVD
+            int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+
+            Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
+            int svd_idx = 0;
+
+            Eigen::Matrix<double, 3, 4> P0;
+            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+            P0.leftCols<3>() = Eigen::Matrix3d::Identity();
+            P0.rightCols<1>() = Eigen::Vector3d::Zero();
+
+            for (auto &it_per_frame : it_per_id.feature_per_frame)
+            {
+                imu_j++;
+
+                Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
+                Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
+                Eigen::Vector3d t = R0.transpose() * (t1 - t0);
+                Eigen::Matrix3d R = R0.transpose() * R1;
+                Eigen::Matrix<double, 3, 4> P;
+                P.leftCols<3>() = R.transpose();
+                P.rightCols<1>() = -R.transpose() * t;
+                Eigen::Vector3d f = it_per_frame.point.normalized();
+                svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
+                svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
+
+                if (imu_i == imu_j)
+                    continue;
+            }
+            ROS_ASSERT(svd_idx == svd_A.rows());
+            Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
+            double svd_method = svd_V[2] / svd_V[3];
+            //it_per_id->estimated_depth = -b / A;
+            //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
+
+            it_per_id.estimated_depth = svd_method;
+            //it_per_id->estimated_depth = INIT_DEPTH;
+
+            if (it_per_id.estimated_depth < 0.1)
+            {
+                it_per_id.estimated_depth = INIT_DEPTH;
+            }
+        } else {
             continue;
-
-        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
-
-        Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
-        int svd_idx = 0;
-
-        Eigen::Matrix<double, 3, 4> P0;
-        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
-        Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
-        P0.leftCols<3>() = Eigen::Matrix3d::Identity();
-        P0.rightCols<1>() = Eigen::Vector3d::Zero();
-
-        for (auto &it_per_frame : it_per_id.feature_per_frame)
-        {
-            imu_j++;
-
-            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
-            Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
-            Eigen::Vector3d t = R0.transpose() * (t1 - t0);
-            Eigen::Matrix3d R = R0.transpose() * R1;
-            Eigen::Matrix<double, 3, 4> P;
-            P.leftCols<3>() = R.transpose();
-            P.rightCols<1>() = -R.transpose() * t;
-            Eigen::Vector3d f = it_per_frame.point.normalized();
-            svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
-            svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
-
-            if (imu_i == imu_j)
-                continue;
         }
-        ROS_ASSERT(svd_idx == svd_A.rows());
-        Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
-        double svd_method = svd_V[2] / svd_V[3];
-        //it_per_id->estimated_depth = -b / A;
-        //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
+        // it_per_id.used_num = it_per_id.feature_per_frame.size();
+        // if (it_per_id.used_num < 4)
+        //     continue;
 
-        it_per_id.estimated_depth = svd_method;
-        //it_per_id->estimated_depth = INIT_DEPTH;
+        // int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
 
-        if (it_per_id.estimated_depth < 0.1)
-        {
-            it_per_id.estimated_depth = INIT_DEPTH;
-        }
+        // Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
+        // int svd_idx = 0;
+
+        // Eigen::Matrix<double, 3, 4> P0;
+        // Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+        // Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+        // P0.leftCols<3>() = Eigen::Matrix3d::Identity();
+        // P0.rightCols<1>() = Eigen::Vector3d::Zero();
+
+        // for (auto &it_per_frame : it_per_id.feature_per_frame)
+        // {
+        //     imu_j++;
+
+        //     Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
+        //     Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
+        //     Eigen::Vector3d t = R0.transpose() * (t1 - t0);
+        //     Eigen::Matrix3d R = R0.transpose() * R1;
+        //     Eigen::Matrix<double, 3, 4> P;
+        //     P.leftCols<3>() = R.transpose();
+        //     P.rightCols<1>() = -R.transpose() * t;
+        //     Eigen::Vector3d f = it_per_frame.point.normalized();
+        //     svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
+        //     svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
+
+        //     if (imu_i == imu_j)
+        //         continue;
+        // }
+        // ROS_ASSERT(svd_idx == svd_A.rows());
+        // Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
+        // double svd_method = svd_V[2] / svd_V[3];
+        // //it_per_id->estimated_depth = -b / A;
+        // //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
+
+        // it_per_id.estimated_depth = svd_method;
+        // //it_per_id->estimated_depth = INIT_DEPTH;
+
+        // if (it_per_id.estimated_depth < 0.1)
+        // {
+        //     it_per_id.estimated_depth = INIT_DEPTH;
+        // }
 
     }
+    
 }
+
+
+//this is the std::map realization
+void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[]){
+    for (auto &it_per_id : feature_map_){
+        if (it_per_id.second.estimated_depth > 0)
+            continue;
+
+        if(STEREO && it_per_id.second.feature_per_frame[0].is_stereo){
+            int imu_i = it_per_id.second.start_frame;
+            Eigen::Matrix<double, 3, 4> leftPose;
+            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+            leftPose.leftCols<3>() = R0.transpose();
+            leftPose.rightCols<1>() = -R0.transpose() * t0;
+
+            Eigen::Matrix<double, 3, 4> rightPose;
+            Eigen::Vector3d t1 = Ps[imu_i] + Rs[imu_i] * tic[1];
+            Eigen::Matrix3d R1 = Rs[imu_i] * ric[1];
+            rightPose.leftCols<3>() = R1.transpose();
+            rightPose.rightCols<1>() = -R1.transpose() * t1;
+
+            Eigen::Vector2d point0, point1;
+            Eigen::Vector3d point3d;
+            point0 = it_per_id.second.feature_per_frame[0].point.head(2);
+            point1 = it_per_id.second.feature_per_frame[0].pointRight.head(2);
+            triangulatePoint(leftPose, rightPose, point0, point1, point3d);
+            Eigen::Vector3d localPoint;
+            localPoint = leftPose.leftCols<3>() * point3d + leftPose.rightCols<1>();
+            double depth = localPoint.z();
+            if (depth > 0)
+                it_per_id.second.estimated_depth = depth;
+            else
+                it_per_id.second.estimated_depth = INIT_DEPTH;
+            /*
+            Vector3d ptsGt = pts_gt[it_per_id.feature_id];
+            printf("stereo %d pts: %f %f %f gt: %f %f %f \n",it_per_id.feature_id, point3d.x(), point3d.y(), point3d.z(),
+                                                            ptsGt.x(), ptsGt.y(), ptsGt.z());
+            */
+            continue;
+        }
+        else if(it_per_id.second.feature_per_frame.size() == 2){
+            //triangulate point with two frame
+            int imu_i = it_per_id.start_frame;
+            Eigen::Matrix<double, 3, 4> leftPose;
+            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+            leftPose.leftCols<3>() = R0.transpose();
+            leftPose.rightCols<1>() = -R0.transpose() * t0;
+
+            imu_i++;
+            Eigen::Matrix<double, 3, 4> rightPose;
+            Eigen::Vector3d t1 = Ps[imu_i] + Rs[imu_i] * tic[0];
+            Eigen::Matrix3d R1 = Rs[imu_i] * ric[0];
+            rightPose.leftCols<3>() = R1.transpose();
+            rightPose.rightCols<1>() = -R1.transpose() * t1;
+
+            Eigen::Vector2d point0, point1;
+            Eigen::Vector3d point3d;
+            point0 = it_per_id.feature_per_frame[0].point.head(2);
+            point1 = it_per_id.feature_per_frame[1].point.head(2);
+            triangulatePoint(leftPose, rightPose, point0, point1, point3d);
+            Eigen::Vector3d localPoint;
+            localPoint = leftPose.leftCols<3>() * point3d + leftPose.rightCols<1>();
+            double depth = localPoint.z();
+            if (depth > 0)
+                it_per_id.estimated_depth = depth;
+            else
+                it_per_id.estimated_depth = INIT_DEPTH;
+            /*
+            Vector3d ptsGt = pts_gt[it_per_id.feature_id];
+            printf("motion  %d pts: %f %f %f gt: %f %f %f \n",it_per_id.feature_id, point3d.x(), point3d.y(), point3d.z(),
+                                                            ptsGt.x(), ptsGt.y(), ptsGt.z());
+            */
+            continue;
+
+        }
+        else if (it_per_id.second.feature_per_frame.size() == 4){
+            //triangulate point with SVD
+            int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+
+            Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
+            int svd_idx = 0;
+
+            Eigen::Matrix<double, 3, 4> P0;
+            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+            P0.leftCols<3>() = Eigen::Matrix3d::Identity();
+            P0.rightCols<1>() = Eigen::Vector3d::Zero();
+
+            for (auto &it_per_frame : it_per_id.feature_per_frame)
+            {
+                imu_j++;
+
+                Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
+                Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
+                Eigen::Vector3d t = R0.transpose() * (t1 - t0);
+                Eigen::Matrix3d R = R0.transpose() * R1;
+                Eigen::Matrix<double, 3, 4> P;
+                P.leftCols<3>() = R.transpose();
+                P.rightCols<1>() = -R.transpose() * t;
+                Eigen::Vector3d f = it_per_frame.point.normalized();
+                svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
+                svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
+
+                if (imu_i == imu_j)
+                    continue;
+            }
+            ROS_ASSERT(svd_idx == svd_A.rows());
+            Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
+            double svd_method = svd_V[2] / svd_V[3];
+            //it_per_id->estimated_depth = -b / A;
+            //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
+
+            it_per_id.estimated_depth = svd_method;
+            //it_per_id->estimated_depth = INIT_DEPTH;
+
+            if (it_per_id.estimated_depth < 0.1)
+            {
+                it_per_id.estimated_depth = INIT_DEPTH;
+            }
+        } else {
+            continue;
+        }
+}
+
 
 void FeatureManager::removeOutlier(set<int> &outlierIndex)
 {
     std::set<int>::iterator itSet;
-    for (auto it = feature.begin(), it_next = feature.begin();
+    for (auto it = features_.begin(), it_next = features_.begin();
          it != feature.end(); it = it_next)
     {
         it_next++;
@@ -443,16 +920,24 @@ void FeatureManager::removeOutlier(set<int> &outlierIndex)
         itSet = outlierIndex.find(index);
         if(itSet != outlierIndex.end())
         {
-            feature.erase(it);
+            features_.erase(it);
             //printf("remove outlier %d \n", index);
+        }
+    }
+}
+
+void FeatureManager::removeOutlier(set<int> &outlierIndex){
+    for (auto it : outlierIndex){
+        if (feature_map_.find(it) != feature_map_.end()){
+            feature_map_.erase(it);
         }
     }
 }
 
 void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3d marg_P, Eigen::Matrix3d new_R, Eigen::Vector3d new_P)
 {
-    for (auto it = feature.begin(), it_next = feature.begin();
-         it != feature.end(); it = it_next)
+    for (auto it = features_.begin(), it_next = features_.begin();
+         it != features_.end(); it = it_next)
     {
         it_next++;
 
@@ -489,10 +974,38 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
     }
 }
 
+void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3d marg_P, Eigen::Matrix3d new_R, Eigen::Vector3d new_P)
+{
+    for (auto it = feature_map_.begin(); it != feature_map_.end();){
+        if (it->second.start_frame != 0){
+            it->second.start_frame--;
+            it++;
+        } else {
+            Eigen::Vector3d uv_i = it->second.feature_per_frame[0].point;  
+            it->second.feature_per_frame.erase(it->second.feature_per_frame.begin());
+            if (it->second.feature_per_frame.size() < 2){
+                feature_map_.erase(it++);
+            } else {
+                Eigen::Vector3d pts_i = uv_i * it->second.estimated_depth;
+                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
+                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);
+                double dep_j = pts_j(2);
+                if (dep_j > 0)
+                    it->second.estimated_depth = dep_j;
+                else
+                    it->second.estimated_depth = INIT_DEPTH;
+                it++;
+            }
+        }
+    }
+}
+
+
+
 void FeatureManager::removeBack()
 {
-    for (auto it = feature.begin(), it_next = feature.begin();
-         it != feature.end(); it = it_next)
+    for (auto it = features_.begin(), it_next = features_.begin();
+         it != features_.end(); it = it_next)
     {
         it_next++;
 
@@ -502,14 +1015,30 @@ void FeatureManager::removeBack()
         {
             it->feature_per_frame.erase(it->feature_per_frame.begin());
             if (it->feature_per_frame.size() == 0)
-                feature.erase(it);
+                features_.erase(it);
+        }
+    }
+}
+
+void  FeatureManager::removeBack(){
+    for (auto it = feature_map_.begin(); it != feature_map_.end();){
+        if (it->second.start_frame != 0){
+            it->second.start_frame--;
+            it++;
+        } else {
+            it->second.feature_per_frame.erase(it->second.feature_per_frame.begin());
+            if (it->second.feature_per_frame.size() == 0){
+                feature_map_.erase(it++);
+            } else {
+                it++;
+            }
         }
     }
 }
 
 void FeatureManager::removeFront(int frame_count)
 {
-    for (auto it = feature.begin(), it_next = feature.begin(); it != feature.end(); it = it_next)
+    for (auto it = features_.begin(), it_next = features_.begin(); it != features_.end(); it = it_next)
     {
         it_next++;
 
@@ -524,7 +1053,28 @@ void FeatureManager::removeFront(int frame_count)
                 continue;
             it->feature_per_frame.erase(it->feature_per_frame.begin() + j);
             if (it->feature_per_frame.size() == 0)
-                feature.erase(it);
+                features_.erase(it);
+        }
+    }
+}
+
+void FeatureManager::removeFront(int frame_count){
+    for (auto it = feature_map_.begin(); it != feature_map_.end();){
+        if (it->second.start_frame == frame_count){
+            it->second.start_frame--;
+            it++;
+        } else {
+            int j = WINDOW_SIZE - 1 - it->second.start_frame;
+            if (it->second.endFrame() < frame_count - 1){
+                it++;
+                continue;
+            }
+            it->second.feature_per_frame.erase(it->second.feature_per_frame.begin() + j);
+            if (it->second.feature_per_frame.size() == 0){
+                feature_map_.erase(it++);
+            } else {
+                it++;
+            }
         }
     }
 }
