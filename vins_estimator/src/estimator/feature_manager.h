@@ -120,8 +120,12 @@ class FeatureManager
 
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);
+
+    //not in use  
     const Matrix3d *Rs;
     Matrix3d ric[2];
+
+    
     //parameter
     int32_t long_track_threshold_ = 4;
 };

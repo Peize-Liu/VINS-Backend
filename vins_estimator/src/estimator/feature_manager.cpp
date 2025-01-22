@@ -59,7 +59,7 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
-// change to map
+// change to map ;; this function should be called in the frontend thread
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("input feature: %d", (int)image.size());
@@ -210,7 +210,7 @@ bool FeatureManager::isKeyFrame(int frame_count, const map<int, vector<pair<int,
     long_track_num_ = 0;
 
     //TODO:: in addKeyyframeFeature we actually go threrough all the features again, this might be redundant
-    for(auto &id_pts : features){
+    for(auto &id_pts : features_){
         int feature_id = id_pts.first;
 
         //use list first, future change to map
@@ -906,6 +906,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
         } else {
             continue;
         }
+    }
 }
 
 
@@ -1083,8 +1084,8 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
 {
     //check the second last frame is keyframe or not
     //parallax betwwen seconde last frame and third last frame
-    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame];
-    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame];
+    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame]; //new frame
+    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame]; //last frame
 
     double ans = 0;
     Vector3d p_j = frame_j.point;
@@ -1099,7 +1100,7 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
     //int r_j = frame_count - 1;
     //p_i_comp = ric[camera_id_j].transpose() * Rs[r_j].transpose() * Rs[r_i] * ric[camera_id_i] * p_i;
     p_i_comp = p_i;
-    double dep_i = p_i(2);
+    double dep_i = p_i(2);  //new point depth = 1 
     double u_i = p_i(0) / dep_i;
     double v_i = p_i(1) / dep_i;
     double du = u_i - u_j, dv = v_i - v_j;

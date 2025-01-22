@@ -8,8 +8,9 @@
 #include <gtsam/navigation/ImuFactor.h>
 #include <opencv2/opencv.hpp>
 
-#include "featureTracker/feature_tracker.h"
-#include "feature_manager.h"
+#include "vins_estimator/src/featureTracker/feature_tracker.h"
+#include "vins_estimator/src/estimator/stereo_feature_manager.hpp"
+#include "vins_estimator/src/estimator/feature_manager.h"
 
 //Public definations  sliding window
 
@@ -53,18 +54,28 @@ public:
         double imu_time_shift_ = 0.0;  // Defined as t_imu = t_cam + imu_shift
     };
 
-    SldWindowStatus(params & param);
+    SldWindowStatus(double start_time, params & param);
+    SldWindowStatus(double start_time, params & param, BasicStatus & status);
     ~SldWindowStatus();
     void setStatus(BasicStatus & status);
+
+    double getStartTime(){
+        return start_time_;
+    }
+    
+    double getEndTime(){
+        return end_time_;
+    }
 
     int32_t InputIMUMeasurement(double t, const Eigen::Vector3d &linear_acceleration,
                                  const Eigen::Vector3d &angular_velocity);
     int32_t InputViusalMeasurement(double t, const std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>> &featureFrame);
 private:
     std::unique_ptr<gtsam::PreintegratedImuMeasurements> preintegrated_;
-    
     BasicStatus status_;
     params param_;
+    double start_time_;
+    double end_time_;
 };
 
 
@@ -72,9 +83,9 @@ class GTSAMEstimator{
 public:
     GTSAMEstimator();
     ~GTSAMEstimator();
-    bool initializeWithIMU(std::vector<IMUMeasurement> & imu_measurements, BasicStatus & status);
+    bool initializeWithIMU(std::list<IMUMeasurement> & imu_measurements, BasicStatus & status);
     
-    // frontend
+    // frontend call back
     void inputIMU(double t, const Eigen::Vector3d &linear_acceleration, const Eigen::Vector3d &angular_velocity);
     void inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
 
@@ -86,6 +97,10 @@ public:
     void changeSensorType(int use_imu, int use_stereo);
     void initFirstPose(Eigen::Vector3d p, Eigen::Matrix3d r);
     void setParameter();
+
+    //Debug functions
+    void pubTrackImage(cv::Mat &img, double time_stamp);
+
 private:
     enum EstimatorStatus{
         InitializeFirstPose = 0,
@@ -103,8 +118,32 @@ private:
         cv::Mat left_img;
         cv::Mat right_img;
     };
+
+    struct FeatureFrame{
+        FeatureFrame(double _time_stamp, std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>> _features):
+            time_stamp(_time_stamp), features(_features){
+        }
+        double time_stamp;
+        std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>> features;
+    };
+
+    struct GTSAMEstimatorParams{
+        SldWindowStatus::params sld_params_;
+        int32_t sld_window_size = 10;
+    };
+
+    std::mutex imu_buffer_mutex_;
+    std::list<IMUMeasurement> imu_buffer_; //this would save imu measurements between two frames
+
     std::mutex raw_image_buffer_mutex_;
-    std::list<ImageFrame> image_buffer_;
+    std::list<ImageFrame> raw_image_buffer_;
+
+    
+    std::mutex feature_frame_buffer_mutex_;
+    // std::list<std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>>> feature_frame_buffer_;
+    std::list<FeatureFrame> feature_frame_buffer_;
+
+
     int32_t frame_id_ = 0; // this give the unqiue id for each frame
 
 
@@ -113,27 +152,27 @@ private:
     FeatureManager feature_manager_; //We will have frontend feature manager to address lossing tracking; 
                                      //and then a backend feature manager to facilitate the optimization
     
+    StereoFeatureManager stereo_feature_manager_;
+
+    
     //frontend thread
     std::thread image_track_thread_;
 
+
+    int32_t getIMUMeasurements(double t0, double t1, std::list<IMUMeasurement>& imu_measurements);
+    int32_t removeIMUMeasurementsBefroeTime(double t);
+
     //backend
-
-    int32_t getIMUMeasurements(double t0, double t1, std::vector<IMUMeasurement> & imu_measurements);
-    
-
     EstimatorStatus estimator_status_ = InitializeFirstPose;
 
-    std::list<SldWindowStatus> sliding_windows_;
 
-    std::mutex imu_buffer_mutex_;
-    std::list<IMUMeasurement> imu_buffer_;
+    std::deque<SldWindowStatus> sliding_windows_;
 
-    std::mutex feature_buffer_mutex_;
-    std::list<std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>>> feature_buffer_;
+    //GTSAM backend parameters
 
-    BasicStatus latest_status_;
+    BasicStatus latest_status_; //TODO may not be used
 
     //configurations
-    SldWindowStatus::params sld_params_;
+    GTSAMEstimatorParams params_;
 
 };
