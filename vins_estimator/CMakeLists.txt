@@ -30,6 +30,9 @@ include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS})
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 # find_package(Eigen3  REQUIRED)
+set(VINS_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src)
+message(WARNING "VINS_INCLUDE_DIR: ${VINS_INCLUDE_DIR}")
+
 include_directories(
   ${catkin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
@@ -39,21 +42,22 @@ catkin_package()
 
 add_library(vins_lib
     src/estimator/parameters.cpp
-    src/estimator/estimator.cpp
-    src/estimator/feature_manager.cpp
+    src/estimator/estimator_gtsam.cpp
+    src/estimator/stereo_feature_manager.cpp
     src/factor/pose_local_parameterization.cpp
     src/factor/projectionTwoFrameOneCamFactor.cpp
     src/factor/projectionTwoFrameTwoCamFactor.cpp
     src/factor/projectionOneFrameTwoCamFactor.cpp
     src/factor/marginalization_factor.cpp
     src/utility/utility.cpp
-    src/utility/visualization.cpp
+    # src/utility/visualization.cpp
     src/utility/CameraPoseVisualization.cpp
     src/initial/solve_5pts.cpp
     src/initial/initial_aligment.cpp
     src/initial/initial_sfm.cpp
     src/initial/initial_ex_rotation.cpp
     src/featureTracker/feature_tracker.cpp)
+target_include_directories(vins_lib PUBLIC ${VINS_INCLUDE_DIR})
 target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${GTSAM_LIBRARIES})
 
 

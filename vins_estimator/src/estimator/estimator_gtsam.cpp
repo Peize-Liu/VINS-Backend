@@ -1,19 +1,37 @@
-#include "estimator_gtsam.hpp"
+#include <boost/make_shared.hpp>
+
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/geometry/Cal3_S2Stereo.h>
+#include <gtsam/nonlinear/Values.h>
+#include <gtsam/nonlinear/NonlinearEquality.h>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/slam/StereoFactor.h>
+#include <gtsam/inference/Symbol.h>
+
+#include "estimator/estimator_gtsam.hpp"
 #include "utility/utility.h"
+#include "estimator/parameters.h"
 
-
-SldWindowStatus::SldWindowStatus(){
-
-}
-
-SldWindowStatus::~SldWindowStatus(){
-
-}
-
-GTSAMEstimator::GTSAMEstimator(){
+GTSAMEstimator::GTSAMEstimator(GTSAMEstimatorParams &params){
     // ROS_INFO("init begins");
     // initThreadFlag = false;
     // clearState();
+    feature_tracker_ = std::make_shared<FeatureTracker>();
+    if (feature_tracker_ == nullptr){
+        printf("[Error] Failed to create feature tracker\n");
+        return;
+    }
+    StereoFeatureManager::StereoFeatureManagerParams stereo_params;
+    stereo_params.long_track_threshold = params.long_track_feature_threshold;
+    
+    stereo_feature_manager_ = std::make_shared<StereoFeatureManager>(stereo_params);
+
+    if (stereo_feature_manager_ == nullptr){
+        printf("[Error] Failed to create stereo feature manager\n");
+        return;
+    }
+    
 }
 
 GTSAMEstimator::~GTSAMEstimator(){
@@ -57,11 +75,11 @@ void GTSAMEstimator::processImage(){
         raw_image_buffer_mutex_.unlock();
 
         //process image
-        auto features = feature_tracker_.trackImage(image_frame.time_stamp, image_frame.left_img, image_frame.right_img);
+        auto features = feature_tracker_->trackImage(image_frame.time_stamp, image_frame.left_img, image_frame.right_img);
         FeatureFrame new_feature_frame(image_frame.time_stamp, features);
         // Debug show track image
         if (SHOW_TRACK){
-            cv::Mat imgTrack = feature_tracker_.getTrackImage();
+            cv::Mat imgTrack = feature_tracker_->getTrackImage();
             pubTrackImage(imgTrack, image_frame.time_stamp);
         }
         if (feature_frame_buffer_mutex_.try_lock()){
@@ -87,7 +105,7 @@ void GTSAMEstimator::processMeasurements(){
 
         double frame_t = feature_frame.time_stamp;
 
-        int32_t new_frame_in_sldwin = 0; //this is the new frame index in the sliding window
+        int32_t next_frame_in_sldwin = 0; //this is the new frame index in the sliding window
 
         if (estimator_status_  == InitializeFirstPose){
             //initialize first pose
@@ -108,11 +126,16 @@ void GTSAMEstimator::processMeasurements(){
 
             if (initializeWithIMU(imu_measurements, first_pose_status)){
                 sliding_windows_.clear();
-                new_frame_in_sldwin = sliding_windows_.size();
-                sliding_windows_.push_back(SldWindowStatus(frame_t, params_.sld_params_,first_pose_status)); //add first key frame to sliding_windows_
+                next_frame_in_sldwin = sliding_windows_.size();
+                SldWindowStatus new_status(frame_t, params_.sld_params_);
+                new_status.setStatus(first_pose_status);
+                sliding_windows_.push_back(new_status); //add first key frame to sliding_windows_
                 //then add feature into feature_manager
-                stereo_feature_manager_.addFeature(new_frame_in_sldwin,feature_frame);
-                feature_manager_.triangulate();
+                stereo_feature_manager_->addFeatures(next_frame_in_sldwin,feature_frame.features, frame_t);
+
+                //triangluate stereo features; here the next_frame_in_sldwin is the index of the new frame in the sliding window
+                stereo_feature_manager_->triangulateFeatures(sliding_windows_); // these would go through all features TODO: we should 
+
                 estimator_status_ = Initialize;
             } else {
                 printf("[Erro] Initialize first pose with IMU failed\n");
@@ -122,31 +145,29 @@ void GTSAMEstimator::processMeasurements(){
         } else if (estimator_status_ == Initialize){
             // add imu measurements to the latest sliding_windows_. preintegrated_; this design allows always add imu measurements to the latest key frame imu spreintergration
             //if is keyframe
-            if (feature_manager_.isKeyFrame(feature_frame)){
+            next_frame_in_sldwin = sliding_windows_.size();
+            if (stereo_feature_manager_->isKeyFrame(next_frame_in_sldwin, feature_frame.features)){
                 //put imu measturements to the current sliding_windows_.back() and then create a new sliding_window
                 std::list<IMUMeasurement> imu_measurements;
-                auto imu_measurements = getIMUMeasurements(sliding_windows_.back().getStartTime(), frame_t, imu_measurements);
+                int32_t ret = getIMUMeasurements(sliding_windows_.back().getStartTime(), frame_t, imu_measurements);
 
                 for (auto imu_measurement : imu_measurements){
-                    sliding_windows_.back().preintegrated_->integrateMeasurement(imu_measurement.linear_acceleration, imu_measurement.angular_velocity, imu_measurement.t);
+                    sliding_windows_.back().inputIMUMeasurement(imu_measurement.t, imu_measurement.linear_acceleration, imu_measurement.angular_velocity);
                 }
                 
-                new_frame_in_sldwin = sliding_windows_.size()
                 //create new sliding_window status
-                feature_manager_.addFeature(new_frame_in_sldwin, feature_frame);
+                stereo_feature_manager_->addFeatures(next_frame_in_sldwin, feature_frame.features, frame_t);
                 
                 //PnP
                 BasicStatus new_status;
-                feature_manager_.initFramePoseByPnP(new_status);
-                feature_manager_.triangulate();
-
-
-                //add to sliding_windows_
-                SldWindowStatus new_sld_status(sld_params_, new_status);
+                stereo_feature_manager_->initNewFramePoseByPnP(next_frame_in_sldwin, sliding_windows_, new_status);
+                SldWindowStatus new_sld_status(frame_t, params_.sld_params_);
+                new_sld_status.setStatus(new_status);
                 sliding_windows_.push_back(new_sld_status);
 
-                if (sliding_windows_.size() == sld_params_.window_size){
-                    //optimize for initial sliding_windows_
+                stereo_feature_manager_->triangulateFeatures(sliding_windows_);
+                //optimize for initial sliding_windows_
+                if (sliding_windows_.size() == params_.sld_window_size){
                     if (optimzeStatus()){
                         estimator_status_ = Norminal;
                         //update status
@@ -158,31 +179,40 @@ void GTSAMEstimator::processMeasurements(){
             }
         } else if (estimator_status_ == Norminal){
             // add imu measurements to the latest sliding_windows_. preintegrated_; this design allows always add imu measurements to the latest key frame imu spreintergration
-            auto imu_measurements = getIMUMeasurements(sliding_windows_.back().status_.time, feature_frame.time_stamp);
-            for (auto imu_measurement : imu_measurements){
-                sliding_windows_.back().preintegrated_->integrateMeasurement(imu_measurement.linear_acceleration, imu_measurement.angular_velocity, imu_measurement.t);
+            next_frame_in_sldwin = sliding_windows_.size();
+            std::list<IMUMeasurement> interval_imu_measurements;
+            auto imu_measurements = getIMUMeasurements(sliding_windows_.back().getStartTime(), frame_t, interval_imu_measurements);
+            for (auto imu_measurement : interval_imu_measurements){
+                sliding_windows_.back().inputIMUMeasurement(imu_measurement.t, imu_measurement.linear_acceleration, imu_measurement.angular_velocity);
+                // sliding_windows_.back().preintegrated_->integrateMeasurement(imu_measurement.linear_acceleration, imu_measurement.angular_velocity, imu_measurement.t);
             }
 
             //if is keyframe
-            is_keyframe = feature_manager_.isKeyFrame(feature_frame);
-            feature_manager_.addFeature(feature_frame);
+            bool is_keyframe = stereo_feature_manager_->isKeyFrame(next_frame_in_sldwin,feature_frame.features);
+            
+            stereo_feature_manager_->addFeatures(next_frame_in_sldwin,feature_frame.features, frame_t);
             // PNP
+            BasicStatus new_status;
+            stereo_feature_manager_->initNewFramePoseByPnP(next_frame_in_sldwin, sliding_windows_, new_status);
             // triangulate
+            stereo_feature_manager_->triangulateFeatures(sliding_windows_);
             //add this frame to back of sliding_windows_
+            SldWindowStatus new_sld_status(frame_t,params_.sld_params_);
+            new_sld_status.setStatus(new_status);
+            sliding_windows_.push_back(new_sld_status);
 
             //optimize
+            optimzeStatus();
+
+            //marginalize
             if (is_keyframe){
                 //marginlize the old sliding_windows_
-                oldest_sld_status = sliding_windows_.front();
-
+                marginalizeOldStatus();
             } else {
-                second_new_sld_status = sliding_windows_[sliding_windows_.size() - 2];
+                marginalizeSecondNewStatus();
                 //mraginlize the second new sliding_windows_
-
             }
 
-            //update status
-            
             //push the outcome the the buffer for publishing
   
         }
@@ -227,29 +257,132 @@ bool GTSAMEstimator::initializeWithIMU(std::list<IMUMeasurement> & imu_measureme
     BasicStatus init_status;
     init_status.R = init_R;
 
-    //initialize first status
-    SldWindowStatus first_status(sld_params_);
-    first_status.setStatus(init_status);
+    double time = imu_measurements.back().t;
 
+    //initialize first status
+    SldWindowStatus first_status(time, params_.sld_params_);
+    first_status.setStatus(init_status);
     //first status add to sliding_windows_
     sliding_windows_.push_back(first_status);
     return true;
 }
 
-SldWindowStatus::SldWindowStatus(SldWindowStatus::params & param):param_(param){
+bool GTSAMEstimator::optimzeStatus(){
+    //TODO:: we can have different optimization strategy here 
+    optimzeWithGTSAM();
+}
+
+bool GTSAMEstimator::optimzeWithGTSAM(){
+    
+    using gtsam::symbol_shorthand::X ; //pose
+    using gtsam::symbol_shorthand::V ; //velocity
+    using gtsam::symbol_shorthand::B ; //bias
+
+    using gtsam::symbol_shorthand::L ; //landmark
+
+    gtsam::NonlinearFactorGraph graph;
+    //add pose node
+    gtsam::Values initial_values;
+    for (int i = 0; i < sliding_windows_.size(); i++){
+        Eigen::Matrix<double, 3, 4> body_pose;
+        sliding_windows_[i].getBodyPose(body_pose);
+        gtsam::Pose3 pose = gtsam::Pose3(gtsam::Rot3(body_pose.block<3, 3>(0, 0)), gtsam::Point3(body_pose.block<3, 1>(0, 3)));
+        initial_values.insert(X(i), pose);
+    }
+
+    //add imu factor //
+    for (int i = 0; i < sliding_windows_.size(); i++){
+        auto imu_preintegration = sliding_windows_[i].getImuPreintegration();
+        gtsam::imuBias::ConstantBias prior_imu_bias(acc_bias_, gyro_bias_);
+        // add IMU factor
+        if (i < sliding_windows_.size() - 1){
+            gtsam::PreintegratedCombinedMeasurements* imu_preintegration = 
+                dynamic_cast<gtsam::PreintegratedCombinedMeasurements*>(sliding_windows_[i].getImuPreintegration().get());
+            gtsam::CombinedImuFactor imu_factor(X(i), V(i), X(i + 1), V(i + 1), B(i), B(i), *imu_preintegration);
+            graph.add(imu_factor);
+        } 
+    }
+
+    //add visual factor
+    for(auto feature: stereo_feature_manager_->features_){
+        if(feature.second->solve_flag == FeaturePerId::SolveFlag::FEATURE_DEPTH_VALID){
+            // if optimize extrinsic parameters of stereo camera
+            if (feature.second->is_stereo){
+                //stereo observation factor
+                // gtsam::GenericStereoFactor
+            } else {
+                //mono observation factor
+            }
+
+        }
+    }
+
+    // add prior factor and marginalize factor
+
+    //optimize
+}
+
+
+SldWindowStatus::SldWindowStatus(double start_time, SldWindowStatus::params & param): 
+    start_time_(start_time), end_time_(start_time), param_(param){
     status_ = BasicStatus();
     //gtsam preintergration parameters
-    preintegrated_ = std::make_unique<gtsam::PreintegratedImuMeasurements>();
+    boost::shared_ptr<gtsam::PreintegratedCombinedMeasurements::Params> p = gtsam::PreintegratedCombinedMeasurements::Params::MakeSharedU(0.0);
+    p->accelerometerCovariance = gtsam::I_3x3 * std::pow(param_.acc_noise_density_, 2);
+    p->gyroscopeCovariance = gtsam::I_3x3 * std::pow(param_.gyro_noise_density_, 2);
+    p->integrationCovariance = gtsam::I_3x3 * 1e-8; //integration noise should be very small TODO: make it configuratble
+    p->biasAccCovariance = gtsam::I_3x3 * std::pow(param_.init_bias_sigma_, 2);
+    p->biasOmegaCovariance = gtsam::I_3x3 * std::pow(param_.init_bias_sigma_, 2);
+    p->biasAccOmegaInt = gtsam::I_6x6 * 1e-5; //integration noise should be very small TODO: make it configuratble
+
+    gtsam::imuBias::ConstantBias prior_imu_bias(Eigen::Vector3d(0.0, 0.0, 0.0), Eigen::Vector3d(0.0, 0.0, 0.0));
+    
+    std::shared_ptr<gtsam::PreintegratedCombinedMeasurements> imu_preintegration_ = 
+        std::make_shared<gtsam::PreintegratedCombinedMeasurements>(p, prior_imu_bias);
+    
+    if (imu_preintegration_ == nullptr){
+        printf("[Error] imu_preintegration_ is nullptr\n");
+    }
+
 }
 
-SldWindowStatus::SldWindowStatus(SldWindowStatus::params & param, BasicStatus & status):param_(param), status_(status){
-     //gtsam preintergration parameters
-    preintegrated_ = std::make_unique<gtsam::PreintegratedImuMeasurements>();
+SldWindowStatus::~SldWindowStatus(){
+    if (imu_preintegration_ != nullptr){
+        imu_preintegration_.reset();
+    }
 }
-`
-
 
 void SldWindowStatus::setStatus(BasicStatus & status){
     status_ = status;
-    preintegrated_ = std::make_unique<gtsam::PreintegratedImuMeasurements>();
 }
+
+bool SldWindowStatus::inputIMUMeasurement(double t, const Eigen::Vector3d &linear_acceleration, const Eigen::Vector3d &angular_velocity){
+    if (t <= end_time_){
+        printf("[Warning] IMU measurements are not in order\n");
+    }
+    end_time_ = t;
+    // optional
+    imu_measurements_.push_back(IMUMeasurement(t, linear_acceleration, angular_velocity));
+    
+    imu_preintegration_->integrateMeasurement(linear_acceleration, angular_velocity, t);
+    return true;
+}
+
+bool SldWindowStatus::heritagePreintegration(std::list<IMUMeasurement> & imu_measurements){
+    //endtime of the last frame
+    for (auto imu_measurement : imu_measurements){
+        if (imu_measurement.t > end_time_){
+            imu_measurements_.push_back(imu_measurement);
+            imu_preintegration_->integrateMeasurement(imu_measurement.linear_acceleration, imu_measurement.angular_velocity, imu_measurement.t);
+            end_time_ = imu_measurement.t;
+        }
+    }
+}
+
+void SldWindowStatus::getBodyPose(Eigen::Matrix<double, 3, 4, 0, 3, 4> &body_pose){
+    body_pose.block<3, 3>(0, 0) = status_.R;
+    body_pose.block<3, 1>(0, 3) = status_.p;
+    return;
+}
+
+

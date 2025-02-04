@@ -199,7 +199,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     }
 }
 
-bool FeatureManager::isKeyFrame(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>> &features, double td){
+bool FeatureManager::isKeyFrame(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &features, double td){
     double parallax_sum = 0;
     int parallax_num = 0;
 
@@ -210,7 +210,7 @@ bool FeatureManager::isKeyFrame(int frame_count, const map<int, vector<pair<int,
     long_track_num_ = 0;
 
     //TODO:: in addKeyyframeFeature we actually go threrough all the features again, this might be redundant
-    for(auto &id_pts : features_){
+    for(auto &id_pts : feature_map_){
         int feature_id = id_pts.first;
 
         //use list first, future change to map

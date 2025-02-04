@@ -18,8 +18,6 @@
 #include <fstream>
 #include <map>
 
-using namespace std;
-
 const double FOCAL_LENGTH = 460.0;
 const int WINDOW_SIZE = 10;
 const int NUM_OF_F = 1000;
@@ -53,7 +51,7 @@ extern int STEREO;
 extern int USE_IMU;
 extern int MULTIPLE_THREAD;
 // pts_gt for debug purpose;
-extern map<int, Eigen::Vector3d> pts_gt;
+extern std::map<int, Eigen::Vector3d> pts_gt;
 
 extern std::string IMAGE0_TOPIC, IMAGE1_TOPIC;
 extern std::string FISHEYE_MASK;
@@ -89,3 +87,4 @@ enum NoiseOrder
     O_AW = 6,
     O_GW = 9
 };
+;

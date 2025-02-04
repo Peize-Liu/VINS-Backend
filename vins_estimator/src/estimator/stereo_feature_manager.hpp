@@ -9,10 +9,12 @@
 #include <algorithm>
 #include <eigen3/Eigen/Dense>
 
+#include "sldwindows_gtsam.hpp"
+
 class FeaturePerFrame
 {
   public:
-    FeaturePerFrame(const Eigen::Matrix<double, 7, 1> &_point, double td)
+    FeaturePerFrame(const Eigen::Matrix<double, 7, 1> &_point, double td) // 
     {
         point.x() = _point(0);
         point.y() = _point(1);
@@ -73,18 +75,25 @@ class FeaturePerId
         return solve_flag == FEATURE_DEPTH_VALID;
     }
 
+    bool isStereo(){
+        return is_stereo;
+    }
+
     typedef enum {
       FEATURE_DEPTH_UNINITIALIZED = 0,
       FEATURE_DEPTH_VALID = 1,
       FEATURE_DEPTH_INVALID = 2,
     } SolveFlag;
-    
+
     const int feature_id;
     int start_frame; //this is the sld_window index of the first frame this feature observed
     std::vector<FeaturePerFrame> feature_per_frame; // and then the feature is observed in the following frames
     int used_num;
     double estimated_depth;
+    bool is_stereo; 
+    int32_t stereo_measurements = -1;
     SolveFlag solve_flag = FEATURE_DEPTH_UNINITIALIZED ; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
+
 };
 
 class StereoFeatureManager{
@@ -97,10 +106,20 @@ class StereoFeatureManager{
     StereoFeatureManager(StereoFeatureManagerParams params);
     ~StereoFeatureManager();
 
+    //set camera extrinsics
+    typedef struct{
+      Eigen::Matrix3d R;
+      Eigen::Vector3d t;
+    } CameraExtrinsics;
+
+    void setCameraExtrinsics(std::vector<CameraExtrinsics> &extrinsics){
+      extrinsics_ = extrinsics;
+    };
+
     //clear all features
     bool clearFeatures(); 
     // check new frame is keyframe or not
-    bool isKeyFrame(const std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>> &features);
+    bool isKeyFrame(int32_t sldwin_index, const std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>> &features);
     // add feaures and record the first observation position of the feature in the sliding window
     bool addFeatures(int sldwin_index, const std::map<int, std::vector<std::pair<int, Eigen::Matrix<double, 7, 1>>>> &features, double td);
 
@@ -112,10 +131,21 @@ class StereoFeatureManager{
     // remove the features that are not valid
     void removeInvalidDepth();
     void clearDepth();
-    // get the depth vector of the features
-    void triangulateFrame();
 
+    // get the depth vector of the features;// we need sliding windows to get the depth of mono tracked features
+    void triangulateFeatures(std::deque<SldWindowStatus> &sliding_windows_pose);
+
+    void sdvTriangulateFeature(std::list<Eigen::Matrix<double, 3, 4>> &pose, std::list<Eigen::Vector2d> &point,
+      Eigen::Vector3d &point3d);
     //remove marginalized feature depth and set a new depth
+
+    void initNewFramePoseByPnP(int32_t next_sldwin_index, std::deque<SldWindowStatus> &sliding_windows_pose, BasicStatus &status);
+
+    bool solvePnP(Eigen::Matrix3d & init_R, Eigen::Vector3d & init_t, std::vector<cv::Point3f> &pts_3d, std::vector<cv::Point2f> &pts_2d, Eigen::Matrix3d &R, Eigen::Vector3d &t);
+
+
+    void initNewFramePoseByIMU(int32_t next_sldwin_index, BasicStatus &status);
+
     void removeBackShiftDepth();
 
     //remove fisrt observation
@@ -127,14 +157,18 @@ class StereoFeatureManager{
     //check parallax with last frame
     double compensatedParallax2(Eigen::Vector3d & last_frame_observe, Eigen::Vector3d & new_frame_observe);
 
-  private:
-    //this function is called by triangulateFrame
-    void triangulatePoint();
-
+    //TODO: get features
     std::map <int, std::shared_ptr<FeaturePerId>> features_;
 
-    StereoFeatureManagerParams params_;
+  private:
+    //this function is called by triangulateFrame
+    void triangulateFeature(Eigen::Matrix <double, 3, 4> &pose_left, Eigen::Matrix <double, 3, 4> &pose_right, 
+      Eigen::Vector2d &point_left, Eigen::Vector2d &point_right, Eigen::Vector3d &point3d);
 
+
+    StereoFeatureManagerParams params_;
+    
+    std::vector<CameraExtrinsics> extrinsics_; // 0 left 1 right
 };
 
 
