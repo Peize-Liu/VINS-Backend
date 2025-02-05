@@ -18,7 +18,7 @@
 #include "../utility/tic_toc.h"
 #include "../estimator/parameters.h"
 
-class ProjectionTwoFrameOneCamFactor : public ceres::SizedCostFunction<2, 7, 7, 7, 1, 1>
+class ProjectionTwoFrameOneCamFactor : public ceres::SizedCostFunction<2, 7, 7, 7, 1, 1> //residual 2, pose 7, pose 7, speedbias 7, td 1
 {
   public:
     ProjectionTwoFrameOneCamFactor(const Eigen::Vector3d &_pts_i, const Eigen::Vector3d &_pts_j,

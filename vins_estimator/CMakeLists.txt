@@ -61,12 +61,12 @@ target_include_directories(vins_lib PUBLIC ${VINS_INCLUDE_DIR})
 target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${GTSAM_LIBRARIES})
 
 
-add_executable(vins_node src/rosNodeTest.cpp)
-target_link_libraries(vins_node vins_lib gtsam)
+# add_executable(vins_node src/rosNodeTest.cpp)
+# target_link_libraries(vins_node vins_lib gtsam)
 
-add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
-target_link_libraries(kitti_odom_test vins_lib gtsam)
+# add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
+# target_link_libraries(kitti_odom_test vins_lib gtsam)
 
-add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
-target_link_libraries(kitti_gps_test vins_lib gtsam)
+# add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
+# target_link_libraries(kitti_gps_test vins_lib gtsam)
 

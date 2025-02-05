@@ -12,6 +12,7 @@
 #include "estimator/estimator_gtsam.hpp"
 #include "utility/utility.h"
 #include "estimator/parameters.h"
+#include "gtsam_factor/gtsam_visual_factor.hpp"
 
 GTSAMEstimator::GTSAMEstimator(GTSAMEstimatorParams &params){
     // ROS_INFO("init begins");
@@ -167,7 +168,7 @@ void GTSAMEstimator::processMeasurements(){
 
                 stereo_feature_manager_->triangulateFeatures(sliding_windows_);
                 //optimize for initial sliding_windows_
-                if (sliding_windows_.size() == params_.sld_window_size){
+                if (sliding_windows_.size() ==static_cast<long unsigned int>(params_.sld_window_size)){
                     if (optimzeStatus()){
                         estimator_status_ = Norminal;
                         //update status
@@ -273,16 +274,38 @@ bool GTSAMEstimator::optimzeStatus(){
 }
 
 bool GTSAMEstimator::optimzeWithGTSAM(){
-    
-    using gtsam::symbol_shorthand::X ; //pose
+    using gtsam::symbol_shorthand::X ; //position and orientation
     using gtsam::symbol_shorthand::V ; //velocity
     using gtsam::symbol_shorthand::B ; //bias
+    using gtsma::symbol_shorthand::P ; //prior
 
     using gtsam::symbol_shorthand::L ; //landmark
 
     gtsam::NonlinearFactorGraph graph;
-    //add pose node
     gtsam::Values initial_values;
+
+
+    // add prior factor and marginalize factor
+    if (ESTIMATE_EXTRINSIC){
+        //add extrinsic prior factor
+        gtsam::Key extrinsic_key = P(0);
+        gtsam::Pose3 extrinsic_prior = gtsam::Pose3(gtsam::Rot3::RzRyRx(params_.RIC[0]), gtsam::Point3(params_.TIC[0]));
+        //add prior noise
+        gtsam::noiseModel::Diagonal::shared_ptr prior_noise = 
+            gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(6) << 0.01, 0.01, 0.01, 0.1, 0.1, 0.1));
+        initial_values.insert(extrinsic_key, extrinsic_prior);
+        graph.add(gtsam::PriorFactor<gtsam::Pose3>(extrinsic_key, extrinsic_prior, prior_noise));
+    }
+
+    if (ESTIMATE_TD){
+        //add td prior factor
+        gtsam::Key td_key = P(1);
+        initial_values.insert(td_key, params_.TD);
+        graph.add(gtsam::PriorFactor<double>(td_key, params_.TD, gtsam::noiseModel::Isotropic::Sigma(1, 0.1)));
+    }
+
+    //add pose node
+
     for (int i = 0; i < sliding_windows_.size(); i++){
         Eigen::Matrix<double, 3, 4> body_pose;
         sliding_windows_[i].getBodyPose(body_pose);
@@ -295,7 +318,7 @@ bool GTSAMEstimator::optimzeWithGTSAM(){
         auto imu_preintegration = sliding_windows_[i].getImuPreintegration();
         gtsam::imuBias::ConstantBias prior_imu_bias(acc_bias_, gyro_bias_);
         // add IMU factor
-        if (i < sliding_windows_.size() - 1){
+        if(i < sliding_windows_.size() - 1){
             gtsam::PreintegratedCombinedMeasurements* imu_preintegration = 
                 dynamic_cast<gtsam::PreintegratedCombinedMeasurements*>(sliding_windows_[i].getImuPreintegration().get());
             gtsam::CombinedImuFactor imu_factor(X(i), V(i), X(i + 1), V(i + 1), B(i), B(i), *imu_preintegration);
@@ -305,21 +328,88 @@ bool GTSAMEstimator::optimzeWithGTSAM(){
 
     //add visual factor
     for(auto feature: stereo_feature_manager_->features_){
+        if (feature.second->feature_per_frame.size() < params_.long_track_feature_threshold){
+            continue;
+        }
+
         if(feature.second->solve_flag == FeaturePerId::SolveFlag::FEATURE_DEPTH_VALID){
             // if optimize extrinsic parameters of stereo camera
             if (feature.second->is_stereo){
                 //stereo observation factor
                 // gtsam::GenericStereoFactor
+                //because we use normalized point so the instrinsic matrix is identity
+                for(int i = 0; i++ ; i < feature.second->feature_per_frame.size()){
+                    initial_values.insert(L(feature.first), gtsam::Point3(feature.second->point));
+                    if (i == 0){
+                        //add first feature observation
+                        if(ESTIMATE_EXTRINSIC){
+                            //add extrinsic factor
+                            graph.add(CustomGTSAMFactors::StereoExtrinsicFactor(X(i), L(feature.first), ,params_.calib_params_.calib_cam));
+                        }
+                        continue;
+                    }
+                    //add stereo factor
+                    graph.add(CustomGTSAMFactors::StereoReprojectionFactor(X(i), X(i - 1), L(feature.first), params_.calib_params_.calib_cam));
+                }
             } else {
                 //mono observation factor
+                // first frame project to other frames
+                for(int i = 0; i++ ; i < feature.second->feature_per_frame.size()){
+                    initial_values.insert(L(feature.first), gtsam::Point3(feature.second->point));
+                    //add mono factor
+                    graph.add(CustomGTSAMFactors::MonoReprojectionFactor(X(i), L(feature.first), params_.calib_params_.calib_cam));
+                }
             }
-
         }
     }
-
-    // add prior factor and marginalize factor
-
     //optimize
+    gtsam::LevenbergMarquardtParams params;
+    params.setVerbosity("ERROR");
+    gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, params);
+    gtsam::Values result = optimizer.optimize();
+    //update sliding_windows_
+    for (int i = 0; i < sliding_windows_.size(); i++){
+        gtsam::Pose3 pose = result.at<gtsam::Pose3>(X(i));
+        Eigen::Matrix<double, 3, 4> body_pose;
+        body_pose.block<3, 3>(0, 0) = pose.rotation().matrix();
+        body_pose.block<3, 1>(0, 3) = pose.translation().vector();
+        sliding_windows_[i].setStatus(BasicStatus(body_pose));
+    }
+    //update extrinsic parameters
+    if (ESTIMATE_EXTRINSIC){
+        gtsam::Pose3 extrinsic = result.at<gtsam::Pose3>(P(0));
+        params_.RIC[0] = extrinsic.rotation().matrix();
+        params_.TIC[0] = extrinsic.translation().vector();
+    }
+    //update td
+    if (ESTIMATE_TD){
+        params_.TD = result.at<double>(P(1));
+    }
+    //update bias
+    for (int i = 0; i < sliding_windows_.size(); i++){
+        gtsam::imuBias::ConstantBias bias = result.at<gtsam::imuBias::ConstantBias>(B(i));
+        sliding_windows_[i].imu_preintegration_->resetIntegrationAndSetBias(bias);
+    }
+}
+
+bool GTSAMEstimator::marginalizeOldStatus(){
+    //TODO::
+    if (sliding_windows_.size() < params_.sld_window_size){
+        printf("[Warning] sliding_windows_ size is less than sld_window_size, marginalization failed\n");
+        return false;
+    }
+    //marginalize the first status, updata prior factor
+    return true;
+}
+
+bool GTSAMEstimator::marginalizeSecondNewStatus(){
+    //TODO::
+    if (sliding_windows_.size() < params_.sld_window_size){
+        printf("[Warning] sliding_windows_ size is less than sld_window_size, marginalization failed\n");
+        return false;
+    }
+    //marginalize the second new status, updata prior factor
+    return true;
 }
 
 
