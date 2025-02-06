@@ -117,10 +117,7 @@ private:
     bool optimzeWithGTSAM();
     bool optimzeWithCeres();//TODO::
 
-    bool setOptimizedStatus();
     bool marginalizeOldStatus();
     bool marginalizeSecondNewStatus();
-
-    bool updateStataus();
 
 };

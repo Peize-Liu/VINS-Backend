@@ -52,6 +52,10 @@ void GTSAMEstimator::inputIMU(double t, const Eigen::Vector3d &linear_accelerati
 }
 
 
+void GTSAMEstimator::processIMU(){
+
+}
+
 //GTSAMEstimator::inputFeature()
 // This function inputs stereo images, I suggest to move this function to frontend. It is actually a front end!
 // only key frame will be add into feature_buffer_, and feature will be added in to featureManager
@@ -278,12 +282,11 @@ bool GTSAMEstimator::optimzeWithGTSAM(){
     using gtsam::symbol_shorthand::V ; //velocity
     using gtsam::symbol_shorthand::B ; //bias
     using gtsma::symbol_shorthand::P ; //prior
-
     using gtsam::symbol_shorthand::L ; //landmark
+
 
     gtsam::NonlinearFactorGraph graph;
     gtsam::Values initial_values;
-
 
     // add prior factor and marginalize factor
     if (ESTIMATE_EXTRINSIC){
@@ -304,8 +307,8 @@ bool GTSAMEstimator::optimzeWithGTSAM(){
         graph.add(gtsam::PriorFactor<double>(td_key, params_.TD, gtsam::noiseModel::Isotropic::Sigma(1, 0.1)));
     }
 
-    //add pose node
 
+    //add pose node
     for (int i = 0; i < sliding_windows_.size(); i++){
         Eigen::Matrix<double, 3, 4> body_pose;
         sliding_windows_[i].getBodyPose(body_pose);
@@ -313,7 +316,7 @@ bool GTSAMEstimator::optimzeWithGTSAM(){
         initial_values.insert(X(i), pose);
     }
 
-    //add imu factor //
+    //add imu factor, velocity factor and bias factor
     for (int i = 0; i < sliding_windows_.size(); i++){
         auto imu_preintegration = sliding_windows_[i].getImuPreintegration();
         gtsam::imuBias::ConstantBias prior_imu_bias(acc_bias_, gyro_bias_);
@@ -412,6 +415,11 @@ bool GTSAMEstimator::marginalizeSecondNewStatus(){
     return true;
 }
 
+//optimize status with 
+bool GTSAMEstimator::optimzeWithCeres(){
+//TODO: realize with ceres
+}
+
 
 SldWindowStatus::SldWindowStatus(double start_time, SldWindowStatus::params & param): 
     start_time_(start_time), end_time_(start_time), param_(param){
@@ -455,6 +463,10 @@ bool SldWindowStatus::inputIMUMeasurement(double t, const Eigen::Vector3d &linea
     imu_measurements_.push_back(IMUMeasurement(t, linear_acceleration, angular_velocity));
     
     imu_preintegration_->integrateMeasurement(linear_acceleration, angular_velocity, t);
+
+    //TODO: propagate status with imu data PVQ
+
+
     return true;
 }
 
@@ -474,5 +486,3 @@ void SldWindowStatus::getBodyPose(Eigen::Matrix<double, 3, 4, 0, 3, 4> &body_pos
     body_pose.block<3, 1>(0, 3) = status_.p;
     return;
 }
-
-
