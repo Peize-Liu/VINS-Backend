@@ -6,15 +6,40 @@
  * Licensed under the GNU General Public License v3.0;
  * you may not use this file except in compliance with the License.
  *******************************************************/
+#include "estimator/estimator.h"
 
-#include "estimator.h"
-#include "../utility/visualization.h"
+#include <gtsam/nonlinear/NonlinearFactor.h>
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/nonlinear/LevenbergMarquardtParams.h>
+#include <gtsam/nonlinear/Marginals.h>
+#include <gtsam/inference/Symbol.h>
+#include <gtsam/geometry/Pose3.h>
+#include <gtsam/navigation/ImuFactor.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
+
+#include "gtsam_factor/gtsam_factors.hpp"
+#include "utility/visualization.h"
 
 Estimator::Estimator(): f_manager{Rs}
 {
     ROS_INFO("init begins");
     initThreadFlag = false;
     clearState();
+    //gtsam set preintergration
+    gtsam_preintegration_params = gtsam::PreintegratedCombinedMeasurements::Params::MakeSharedU();
+    if (gtsam_preintegration_params == nullptr)
+    {
+        printf("[Error] Failed to create gtsam preintegration parameters\n");
+        return;
+    }
+    gtsam_preintegration_params->accelerometerCovariance = gtsam::I_3x3 * std::pow(ACC_N, 2);
+    gtsam_preintegration_params->gyroscopeCovariance = gtsam::I_3x3 * std::pow(GYR_N, 2);
+    gtsam_preintegration_params->integrationCovariance = gtsam::I_3x3 * 1e-8; //integration noise should be very small TODO: make it configuratble
+    gtsam_preintegration_params->biasAccCovariance = gtsam::I_3x3 * std::pow(ACC_W, 2);
+    gtsam_preintegration_params->biasOmegaCovariance = gtsam::I_3x3 * std::pow(GYR_W, 2);
+    gtsam_preintegration_params->biasAccOmegaInt = gtsam::I_6x6 * 1e-5; //integration noise should be very small TODO: make it configuratble
+
 }
 
 Estimator::~Estimator()
@@ -78,10 +103,13 @@ void Estimator::clearState()
 
     if (tmp_pre_integration != nullptr)
         delete tmp_pre_integration;
+    if (tmp_pre_integration_gtsam != nullptr)
+        delete tmp_pre_integration_gtsam;
     if (last_marginalization_info != nullptr)
         delete last_marginalization_info;
 
     tmp_pre_integration = nullptr;
+    tmp_pre_integration_gtsam = nullptr;
     last_marginalization_info = nullptr;
     last_marginalization_parameter_blocks.clear();
 
@@ -141,6 +169,7 @@ void Estimator::changeSensorType(int use_imu, int use_stereo)
                     delete last_marginalization_info;
 
                 tmp_pre_integration = nullptr;
+                tmp_pre_integration_gtsam = nullptr;
                 last_marginalization_info = nullptr;
                 last_marginalization_parameter_blocks.clear();
             }
@@ -312,6 +341,7 @@ void Estimator::processMeasurements()
                     else
                         dt = accVector[i].first - accVector[i - 1].first;
                     processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second); //preintergration/ tmp would be stored in pre_integrations and tmp_pre_integrations
+                    processIMUGTSAM(dt, accVector[i].second, gyrVector[i].second);
                 }
             }
             mProcess.lock();
@@ -390,7 +420,6 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
         //if(solver_flag != NON_LINEAR)
             tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
-
         dt_buf[frame_count].push_back(dt);
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
@@ -407,6 +436,46 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
     acc_0 = linear_acceleration;
     gyr_0 = angular_velocity; 
 }
+
+void Estimator::processIMUGTSAM(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
+{
+    if (!first_imu)
+    {
+        first_imu = true;
+        acc_0 = linear_acceleration;
+        gyr_0 = angular_velocity;
+    }
+
+    if (!gtsam_pre_integrations[frame_count])
+    {
+        gtsam::imuBias::ConstantBias prior_imu_bias(Bas[frame_count], Bgs[frame_count]);
+        gtsam_pre_integrations[frame_count] = 
+        new gtsam::PreintegratedImuMeasurements(gtsam_preintegration_params, prior_imu_bias);
+    }
+    if (frame_count != 0)
+    {
+        // pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
+        gtsam_pre_integrations[frame_count]->integrateMeasurement(linear_acceleration, angular_velocity, dt);
+        //if(solver_flag != NON_LINEAR)
+            // tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
+            tmp_pre_integration_gtsam->integrateMeasurement(linear_acceleration, angular_velocity, dt);
+        dt_buf[frame_count].push_back(dt);
+        linear_acceleration_buf[frame_count].push_back(linear_acceleration);
+        angular_velocity_buf[frame_count].push_back(angular_velocity);
+
+        int j = frame_count;         
+        Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;
+        Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - Bgs[j];
+        Rs[j] *= Utility::deltaQ(un_gyr * dt).toRotationMatrix();
+        Vector3d un_acc_1 = Rs[j] * (linear_acceleration - Bas[j]) - g;
+        Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
+        Ps[j] += dt * Vs[j] + 0.5 * dt * dt * un_acc;
+        Vs[j] += dt * un_acc;
+    }
+    acc_0 = linear_acceleration;
+    gyr_0 = angular_velocity; 
+}
+
 
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header)
 {
@@ -430,8 +499,12 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
     ImageFrame imageframe(image, header);
     imageframe.pre_integration = tmp_pre_integration;
+    imageframe.pre_integration_gtsam = tmp_pre_integration_gtsam;
+
     all_image_frame.insert(make_pair(header, imageframe));
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
+    //set a universal preintergration parameter for all frames
+    tmp_pre_integration_gtsam = new gtsam::PreintegratedImuMeasurements(,gtsam::imuBias::ConstantBias(Bas[frame_count], Bgs[frame_count]));
 
     if(ESTIMATE_EXTRINSIC == 2)
     {
@@ -1324,6 +1397,144 @@ void Estimator::optimization()
     }
     //printf("whole marginalization costs: %f \n", t_whole_marginalization.toc());
     //printf("whole time for ceres: %f \n", t_whole.toc());
+}
+
+void Estimator::optimizationGTSAM(){
+    using gtsam::symbol_shorthand::X; //position and orientation
+    using gtsam::symbol_shorthand::V; //velocity
+    using gtsam::symbol_shorthand::B; //bias
+    using gtsam::symbol_shorthand::L; //landmarks
+    using gtsam::symbol_shorthand::E; //extrinsic
+    using gtsam::symbol_shorthand::T; //time offset
+    using gtsam::symbol_shorthand::P; //priors
+
+    TicToc t_whole, t_prepare;
+    gtsam::NonlinearFactorGraph graph;
+    gtsam::Values initial_values;
+    constructProblem(graph, initial_values); //构造问题
+    gtsam::LevenbergMarquardtParams params;
+    params.setVerbosity("ERROR");
+    //optimize
+    gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, params);
+    gtsam::Values result = optimizer.optimize();
+    //update state
+    updateStates(result);
+    //marginalization and build prior_factor for next optimization
+    if (marginalization_flag == MARGIN_OLD){
+        gtsam::KeyVector marginal_keys = {X(0), V(0), B(0)};
+        
+    } else {
+
+    }
+
+}
+
+void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Values &initial_values){
+    //construct initial values
+    using gtsam::symbol_shorthand::X; //position and orientation
+    using gtsam::symbol_shorthand::V; //velocity
+    using gtsam::symbol_shorthand::B; //bias
+    using gtsam::symbol_shorthand::L; //landmarks
+    using gtsam::symbol_shorthand::E; //extrinsic
+    using gtsam::symbol_shorthand::T; //time offset
+    using gtsam::symbol_shorthand::P; //priors
+
+
+    //add PVQ factors
+    for (int i = 0; i <= frame_count + 1; i++){
+        gtsam::Pose3 pose = gtsam::Pose3(gtsam::Rot3(Rs[i]), gtsam::Point3(Ps[i]));
+        initial_values.insert(X(i), pose);
+        if(USE_IMU){
+            gtsam::Vector3 vel = Vs[i];
+            initial_values.insert(V(i), vel);
+            gtsam::imuBias::ConstantBias bias(Bas[i], Bgs[i]);
+            initial_values.insert(B(i), bias);
+        }
+    }
+
+    //IMU preintergration factor
+    if(USE_IMU){
+        for (int i = 0; i < frame_count; i++){
+            int j = i + 1;
+
+            gtsam::PreintegratedImuMeasurements *preint_imu = gtsam_pre_integrations[j];
+            gtsam::imuBias::ConstantBias bias(Bas[i], Bgs[i]);
+            gtsam::imuBias::ConstantBias bias_next(Bas[j], Bgs[j]);
+            gtsam::Pose3 pose_i = initial_values.at<gtsam::Pose3>(X(i));
+            gtsam::Pose3 pose_j = initial_values.at<gtsam::Pose3>(X(j));
+            gtsam::Vector3 vel_i = initial_values.at<gtsam::Vector3>(V(i));
+            gtsam::Vector3 vel_j = initial_values.at<gtsam::Vector3>(V(j));
+            graph.add(gtsam::ImuFactor(X(i), V(i), X(j), V(j), B(i), *preint_imu));
+        }
+    }
+
+    //set extrinsic parameters as prior and optimize
+    for (int i = 0; i < NUM_OF_CAM; i++){
+        gtsam::Pose3 pose = gtsam::Pose3(gtsam::Rot3(ric[i]), gtsam::Point3(tic[i]));
+        initial_values.insert(E(i), pose);
+    }
+
+    //Set DT as prior
+    initial_values.insert(T(0), td);
+
+    //set marginalization factor as prior
+    if( prior_factor != nullptr){
+        graph.add(prior_factor);
+    }
+
+    //Add landmark factors
+    for (auto &it_per_id : f_manager.feature){
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (it_per_id.used_num < 4){
+            continue;
+        }
+        if (it_per_id.start_frame != 0){
+            continue;
+        }
+        if (it_per_id.solve_flag != 1){
+            continue;
+        }
+
+        initial_values.insert(L(it_per_id.feature_id), static_cast<double>(1.0 / it_per_id.estimated_depth));
+
+        if (STEREO && it_per_id.feature_per_frame.front().is_stereo){
+            // extrinsic factor
+            gtsam::SharedNoiseModel pixel_noise = gtsam::noiseModel::Isotropic::Sigma(2, 1,0);
+            gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame.front().point(0), it_per_id.feature_per_frame.front().point(1), 1.0);
+            gtsam::Point3 right_p = gtsam::Point3(it_per_id.feature_per_frame.front().pointRight(0), it_per_id.feature_per_frame.front().pointRight(1), 1.0);
+            gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame.front().velocity(0), it_per_id.feature_per_frame.front().velocity(1));
+            gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame.front().velocityRight(0), it_per_id.feature_per_frame.front().velocityRight(1));
+            double cur_td = it_per_id.feature_per_frame.front().cur_td;
+            CustomGTSAMFactors::ProjectionOneFrameTwoCamFactor stereo_factor(pixel_noise, E(0), E(1), L(it_per_id.feature_id), T(0),
+                                                                    left_p, right_p, l_pix_v, r_pix_v, cur_td, false);
+            graph.add(stereo_factor);
+
+            // stereo factors
+            for (int i =1 ; i++ ; i <= it_per_id.endFrame()){
+                gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
+                gtsam::Point3 right_p = gtsam::Point3(it_per_id.feature_per_frame[i].pointRight(0), it_per_id.feature_per_frame[i].pointRight(1), 1.0);
+                gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
+                gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocityRight(0), it_per_id.feature_per_frame[i].velocityRight(1));
+                
+                double cur_td = it_per_id.feature_per_frame[i].cur_td;
+                int32_t start_frame = it_per_id.start_frame;
+                CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise,P(start_frame),P(start_frame+1), E(0), E(1), L(it_per_id.feature_id), T(0),
+                                                                    left_p, right_p, l_pix_v, r_pix_v, cur_td, false);
+                graph.add(stereo_reproject_factor);
+            }
+        } else {
+            // monocular factors
+            for (int i =1 ; i++ ; i <= it_per_id.endFrame()){
+                gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
+                gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
+                double cur_td = it_per_id.feature_per_frame[i].cur_td;
+                int32_t start_frame = it_per_id.start_frame;
+                CustomGTSAMFactors::ProjectionTwoFrameOneCamFactor mono_reproject_factor(pixel_noise,P(start_frame),P(start_frame+1), E(0), L(it_per_id.feature_id), T(0),
+                                                                    left_p, l_pix_v, cur_td, false);
+                graph.add(mono_reproject_factor);
+            }
+        }
+    }
 }
 
 void Estimator::slideWindow()

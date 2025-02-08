@@ -20,21 +20,25 @@
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
 
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/navigation/ImuFactor.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
+
 #include "parameters.h"
 #include "feature_manager.h"
-#include "../utility/utility.h"
-#include "../utility/tic_toc.h"
-#include "../initial/solve_5pts.h"
-#include "../initial/initial_sfm.h"
-#include "../initial/initial_alignment.h"
-#include "../initial/initial_ex_rotation.h"
-#include "../factor/imu_factor.h"
-#include "../factor/pose_local_parameterization.h"
-#include "../factor/marginalization_factor.h"
-#include "../factor/projectionTwoFrameOneCamFactor.h"
-#include "../factor/projectionTwoFrameTwoCamFactor.h"
-#include "../factor/projectionOneFrameTwoCamFactor.h"
-#include "../featureTracker/feature_tracker.h"
+#include "utility/utility.h"
+#include "utility/tic_toc.h"
+#include "initial/solve_5pts.h"
+#include "initial/initial_sfm.h"
+#include "initial/initial_alignment.h"
+#include "initial/initial_ex_rotation.h"
+#include "factor/imu_factor.h"
+#include "factor/pose_local_parameterization.h"
+#include "factor/marginalization_factor.h"
+#include "factor/projectionTwoFrameOneCamFactor.h"
+#include "factor/projectionTwoFrameTwoCamFactor.h"
+#include "factor/projectionOneFrameTwoCamFactor.h"
+#include "featureTracker/feature_tracker.h"
 
 
 class Estimator
@@ -50,6 +54,7 @@ class Estimator
     void inputFeature(double t, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &featureFrame);
     void inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
     void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
+    void processIMUGTSAM(double t, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header);
     void processMeasurements();
     void changeSensorType(int use_imu, int use_stereo);
@@ -65,6 +70,12 @@ class Estimator
     void optimization();
     void vector2double();
     void double2vector();
+
+    void optimizationGTSAM();
+    void constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Values &initial_values);
+    void updateStates(gtsam::Values &result);
+    void getGTSAMCovirance(MatrixXd &cov);
+
     bool failureDetection();
     bool getIMUInterval(double t0, double t1, vector<pair<double, Eigen::Vector3d>> &accVector, 
                                               vector<pair<double, Eigen::Vector3d>> &gyrVector);
@@ -125,6 +136,7 @@ class Estimator
     double Headers[(WINDOW_SIZE + 1)];
 
     IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];
+    gtsam::PreintegratedImuMeasurements *gtsam_pre_integrations[WINDOW_SIZE + 1];
     Vector3d acc_0, gyr_0;
 
     vector<double> dt_buf[(WINDOW_SIZE + 1)];
@@ -164,6 +176,9 @@ class Estimator
 
     map<double, ImageFrame> all_image_frame;
     IntegrationBase *tmp_pre_integration;
+    gtsam::PreintegratedImuMeasurements* tmp_pre_integration_gtsam;
+
+    boost::shared_ptr<gtsam::PreintegratedCombinedMeasurements::Params> gtsam_preintegration_params = nullptr;
 
     Eigen::Vector3d initP;
     Eigen::Matrix3d initR;
@@ -174,4 +189,6 @@ class Estimator
 
     bool initFirstPoseFlag;
     bool initThreadFlag;
+    gtsam::NonlinearFactor::shared_ptr prior_factor;
+    
 };

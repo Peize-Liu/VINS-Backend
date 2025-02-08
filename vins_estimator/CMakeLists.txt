@@ -35,6 +35,8 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
 )
 
+set(VINS_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src)
+
 catkin_package()
 
 add_library(vins_lib
@@ -54,6 +56,8 @@ add_library(vins_lib
     src/initial/initial_sfm.cpp
     src/initial/initial_ex_rotation.cpp
     src/featureTracker/feature_tracker.cpp)
+
+target_include_directories(vins_lib PUBLIC ${VINS_INCLUDE_DIR})
 target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${GTSAM_LIBRARIES})
 
 

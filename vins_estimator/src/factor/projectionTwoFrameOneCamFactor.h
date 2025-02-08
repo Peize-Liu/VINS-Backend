@@ -14,9 +14,9 @@
 #include <ros/assert.h>
 #include <ceres/ceres.h>
 #include <Eigen/Dense>
-#include "../utility/utility.h"
-#include "../utility/tic_toc.h"
-#include "../estimator/parameters.h"
+#include "utility/utility.h"
+#include "utility/tic_toc.h"
+#include "estimator/parameters.h"
 
 class ProjectionTwoFrameOneCamFactor : public ceres::SizedCostFunction<2, 7, 7, 7, 1, 1>
 {

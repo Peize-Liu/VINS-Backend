@@ -12,11 +12,16 @@
 #pragma once
 #include <eigen3/Eigen/Dense>
 #include <iostream>
-#include "../factor/imu_factor.h"
-#include "../utility/utility.h"
 #include <ros/ros.h>
 #include <map>
-#include "../estimator/feature_manager.h"
+#include <gtsam/navigation/ImuFactor.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
+
+#include "estimator/feature_manager.h"
+#include "factor/imu_factor.h"
+#include "utility/utility.h"
+
+
 
 using namespace Eigen;
 using namespace std;
@@ -34,7 +39,9 @@ class ImageFrame
         Matrix3d R;
         Vector3d T;
         IntegrationBase *pre_integration;
+        gtsam::PreintegratedImuMeasurements *pre_integration_gtsam;
         bool is_key_frame;
+
 };
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs);
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x);
