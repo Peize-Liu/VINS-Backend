@@ -17,6 +17,11 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/navigation/ImuFactor.h>
 #include <gtsam/navigation/CombinedImuFactor.h>
+#include <gtsam/nonlinear/Values.h>
+#include <gtsam/linear/GaussianFactorGraph.h>
+#include <gtsam/linear/SchurComplement.h>
+#include <gtsam/inference/Symbol.h>
+
 
 #include "gtsam_factor/gtsam_factors.hpp"
 #include "utility/visualization.h"
@@ -539,7 +544,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 }
                 if(result)
                 {
-                    optimization();
+                    // optimization();
+                    optimizationGTSAM();
                     updateLatestStates();
                     solver_flag = NON_LINEAR;
                     slideWindow();
@@ -570,7 +576,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 {
                     pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
                 }
-                optimization();
+                // optimization();
+                optimizationGTSAM();
                 updateLatestStates();
                 solver_flag = NON_LINEAR;
                 slideWindow();
@@ -613,7 +620,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         if(!USE_IMU)
             f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
         f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
-        optimization();
+        // optimization();
+        optimizationGTSAM();
         set<int> removeIndex;
         outliersRejection(removeIndex);
         f_manager.removeOutlier(removeIndex);
@@ -1421,12 +1429,92 @@ void Estimator::optimizationGTSAM(){
     updateStates(result);
     //marginalization and build prior_factor for next optimization
     if (marginalization_flag == MARGIN_OLD){
+        //TOOD::Make this process a function
         gtsam::KeyVector marginal_keys = {X(0), V(0), B(0)};
-        
+        // remove visual factor
+        gtsam::NonlinearFactorGraph factorsToMarginalize;
+        for (const auto& factor : graph) {
+            bool containsX1 = std::any_of(
+                factor->keys().begin(), 
+                factor->keys().end(), 
+                [&](gtsam::Key key) { return key == X(0) || key == V(0) || key == B(0); }
+            );
+            if (containsX1) {
+            factorsToMarginalize.push_back(factor);
+            }
+        }
+        gtsam::Values values;
+         // 3. 线性化局部子图
+        gtsam::GaussianFactor::shared_ptr llinearized_graph = factorsToRemove.linearize(value);
+         // 4. 舒尔补消元
+        gtsam::Ordering ordering;
+        ordering.push_back(variablesToMarginalize);
+        Matrix H;
+        Vector b;
+        std::tie(H, b) = linearizedGraph->hessian(ordering);
+        //hessian decomposition
+        Matrix H_marg = H.block(remainingVarsStart, remainingVarsStart, remainingVarsSize, remainingVarsSize);
+        Vector b_marg = b.segment(remainingVarsStart, remainingVarsSize);
+
+        gtsam::KeyVector remainingKeys = {X(1), V(1), B(1)};
+
+        // search features that connect with X(0), but will not be removed
+        for (feature: f_manager.feature){
+            if (feature.start_frame != 0){
+                continue;
+            }
+            if (feature.used_num < 2){
+                continue;
+            }
+            if (feature.solve_flag != 1){
+                continue;
+            }
+            remainingKeys.push_back(L(feature.feature_id));
+        }
+
+        prior_factor = std::make_shared<JacobianPrior>(remainingKeys, H_marg, b_marg);
     } else {
-
+        gtsam::KeyVector marginal_keys = {X(frame_count), V(frame_count), B(frame_count)};
+        // remove visual factor
+        gtsam::NonlinearFactorGraph factorsToMarginalize;
+        for (const auto& factor : graph) {
+            bool containsX1 = std::any_of(
+                factor->keys().begin(), 
+                factor->keys().end(), 
+                [&](gtsam::Key key) { return key == X(frame_count-1) || key == V(frame_count-1) || key == B(frame_count-1); }
+            );
+            if (containsX1) {
+            factorsToMarginalize.push_back(factor);
+            }
+        }
+        gtsam::Values values;
+         // 3. 线性化局部子图
+        gtsam::GaussianFactor::shared_ptr llinearized_graph = factorsToRemove.linearize(value);
+         // 4. 舒尔补消元
+        gtsam::Ordering ordering;
+        ordering.push_back(variablesToMarginalize);
+        Matrix H;
+        Vector b;
+        std::tie(H, b) = linearizedGraph->hessian(ordering);
+        //hessian decomposition
+        Matrix H_marg = H.block(remainingVarsStart, remainingVarsStart, remainingVarsSize, remainingVarsSize);
+        Vector b_marg = b.segment(remainingVarsStart, remainingVarsSize);
+        gtsam::KeyVector remainingKeys = {X(frame_count), V(frame_count), B(frame_count)};
+        // search features that connect with X(0), but will not be removed
+        for (feature: f_manager.feature){
+            if (feature.start_frame != 0){
+                continue;
+            }
+            if (feature.used_num < 2){
+                continue;
+            }
+            if (feature.solve_flag != 1){
+                continue;
+            }
+            remainingKeys.push_back(L(feature.feature_id));
+        }
+        prior_factor = std::make_shared<JacobianPrior>(remainingKeys, H_marg, b_marg);
     }
-
 }
 
 void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Values &initial_values){
@@ -1535,6 +1623,54 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
             }
         }
     }
+}
+
+void Estimator::updateStates(gtsam::Values &result){
+    using gtsam::symbol_shorthand::X; //position and orientation
+    using gtsam::symbol_shorthand::V; //velocity
+    using gtsam::symbol_shorthand::B; //bias
+    using gtsam::symbol_shorthand::L; //landmarks
+    using gtsam::symbol_shorthand::E; //extrinsic
+    using gtsam::symbol_shorthand::T; //time offset
+    using gtsam::symbol_shorthand::P; //priors
+
+    for (int i = 0; i <= frame_count + 1; i++){
+        gtsam::Pose3 pose = result.at<gtsam::Pose3>(X(i));
+        Rs[i] = pose.rotation().matrix();
+        Ps[i] = pose.translation();
+        if(USE_IMU){
+            Vs[i] = result.at<gtsam::Vector3>(V(i));
+            gtsam::imuBias::ConstantBias bias = result.at<gtsam::imuBias::ConstantBias>(B(i));
+            Bas[i] = bias.accelerometer();
+            Bgs[i] = bias.gyroscope();
+        }
+    }
+
+    for (int i = 0; i < NUM_OF_CAM; i++){
+        gtsam::Pose3 pose = result.at<gtsam::Pose3>(E(i));
+        ric[i] = pose.rotation().matrix();
+        tic[i] = pose.translation();
+    }
+
+    td = result.at<double>(T(0));
+
+    //update landmarks
+    for (auto &it_per_id : f_manager.feature){
+        if (it_per_id.used_num < 4){
+            continue;
+        }
+        if (it_per_id.start_frame != 0){
+            continue;
+        }
+        if (it_per_id.solve_flag != 1){
+            continue;
+        }
+        it_per_id.estimated_depth = 1.0 / result.at<double>(L(it_per_id.feature_id));
+    }
+}
+
+void Estimator::getGTSAMCovirance(MatrixXd &cov){
+//TODO: implement this function
 }
 
 void Estimator::slideWindow()
