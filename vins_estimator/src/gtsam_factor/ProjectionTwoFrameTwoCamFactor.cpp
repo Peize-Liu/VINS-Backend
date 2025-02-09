@@ -2,8 +2,6 @@
 #include <gtsam/nonlinear/NonlinearFactor.h>
 
 namespace CustomGTSAMFactors{
-    
-using Base = gtsam::NoiseModelFactor;
 ProjectionTwoFrameTwoCamFactor::ProjectionTwoFrameTwoCamFactor(const gtsam::SharedNoiseModel& noise_model,
     gtsam::Key pose_i_key, gtsam::Key pose_j_key,
     gtsam::Key ex1_key, gtsam::Key ex2_key,
@@ -11,15 +9,13 @@ ProjectionTwoFrameTwoCamFactor::ProjectionTwoFrameTwoCamFactor(const gtsam::Shar
     const gtsam::Vector3& pts_i, const gtsam::Vector3& pts_j,
     const gtsam::Vector2& velocity_i, const gtsam::Vector2& velocity_j,
     double td_i, double td_j, const gtsam::Matrix2& sqrt_info,
-    bool unit_sphere = false)
-    : Base(noise_model,
+    bool unit_sphere): gtsam::NoiseModelFactor6<gtsam::Pose3,gtsam::Pose3,gtsam::Pose3,gtsam::Pose3, double,double>(noise_model,
         {pose_i_key, pose_j_key, ex1_key, ex2_key, inv_depth_key, td_key}),
     pts_i_(pts_i), pts_j_(pts_j),
     velocity_i_(gtsam::Vector3(velocity_i.x(), velocity_i.y(), 0)),
     velocity_j_(gtsam::Vector3(velocity_j.x(), velocity_j.y(), 0)),
     td_i_(td_i), td_j_(td_j), sqrt_info_(sqrt_info),
     unit_sphere_(unit_sphere) {
-
     if (unit_sphere_) {
         gtsam::Vector3 a = pts_j_.normalized();
         gtsam::Vector3 tmp(0, 0, 1);
@@ -35,12 +31,12 @@ gtsam::Vector ProjectionTwoFrameTwoCamFactor::evaluateError(
     const gtsam::Pose3& pose_i, const gtsam::Pose3& pose_j,
     const gtsam::Pose3& ex1, const gtsam::Pose3& ex2,
     const double& inv_depth, const double& td,
-    boost::optional<gtsam::Matrix&> H1 = boost::none,
-    boost::optional<gtsam::Matrix&> H2 = boost::none,
-    boost::optional<gtsam::Matrix&> H3 = boost::none,
-    boost::optional<gtsam::Matrix&> H4 = boost::none,
-    boost::optional<gtsam::Matrix&> H5 = boost::none,
-    boost::optional<gtsam::Matrix&> H6 = boost::none){
+    boost::optional<gtsam::Matrix&> H1,
+    boost::optional<gtsam::Matrix&> H2,
+    boost::optional<gtsam::Matrix&> H3,
+    boost::optional<gtsam::Matrix&> H4,
+    boost::optional<gtsam::Matrix&> H5,
+    boost::optional<gtsam::Matrix&> H6) const {
 
 // 时间补偿
 gtsam::Vector3 pts_i_td = pts_i_ - (td - td_i_) * velocity_i_;
@@ -99,20 +95,20 @@ if (H1 || H2 || H3 || H4 || H5 || H6) {
     // 各参数导数链式法则
     if (H1) {  // pose_i
     gtsam::Matrix36 D_pts_w_pose_i = D_pose_i;
-    gtsam::Matrix36 J = -reduce * ex2.rotation().transpose() * 
+    gtsam::Matrix26 J = reduce * ex2.rotation().transpose() * 
                         pose_j.rotation().transpose() * D_pts_w_pose_i;
     *H1 = J;
     }
 
     if (H2) {  // pose_j
     gtsam::Matrix36 D_pts_imu_j_pose_j = D_pose_j;
-    gtsam::Matrix36 J = reduce * ex2.rotation().transpose() * D_pts_imu_j_pose_j;
+    gtsam::Matrix26 J = reduce * ex2.rotation().transpose() * D_pts_imu_j_pose_j;
     *H2 = J;
     }
 
     if (H3) {  // ex1
     gtsam::Matrix36 D_pts_imu_i_ex1 = D_ex1;
-    gtsam::Matrix36 J = reduce * ex2.rotation().transpose() * 
+    gtsam::Matrix26 J = reduce * ex2.rotation().transpose() * 
                         pose_j.rotation().transpose() * 
                         pose_i.rotation().matrix() * D_pts_imu_i_ex1;
     *H3 = J;
@@ -130,7 +126,7 @@ if (H1 || H2 || H3 || H4 || H5 || H6) {
     gtsam::Vector3 d_pts_imu_j = pose_j.rotation().transpose() * d_pts_w;
     gtsam::Vector3 d_pts_camera_j = ex2.rotation().transpose() * d_pts_imu_j;
     
-    gtsam::Vector2 J = reduce * d_pts_camera_j.head<2>();
+    gtsam::Vector2 J = (reduce * d_pts_camera_j).head<2>();
     *H5 = J;
     }
 
@@ -142,8 +138,8 @@ if (H1 || H2 || H3 || H4 || H5 || H6) {
         pose_j.rotation().transpose() * pose_i.rotation().matrix() * 
         ex1.rotation().matrix() * (d_pts_i_td / inv_depth);
     
-    gtsam::Vector2 J = reduce * d_pts_camera_j.head<2>() + 
-                        sqrt_info_ * d_pts_j_td.head<2>();
+    gtsam::Vector2 J = (reduce * d_pts_camera_j).head<2>()
+     + sqrt_info_ * (d_pts_j_td.head<2>()); //TODO: check is jacobian
     *H6 = J;
     }
 }

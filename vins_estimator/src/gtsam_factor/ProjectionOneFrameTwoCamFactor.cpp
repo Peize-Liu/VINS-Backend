@@ -9,11 +9,10 @@ ProjectionOneFrameTwoCamFactor::ProjectionOneFrameTwoCamFactor(
     gtsam::Key depth_key, gtsam::Key td_key,
     const gtsam::Point3& pts_i, const gtsam::Point3& pts_j,
     const gtsam::Vector2& velocity_i, const gtsam::Vector2& velocity_j,
-    double td, bool use_unit_sphere = false
-) : gtsam::NoiseModelFactor4<gtsam::Pose3, gtsam::Pose3, double, double>(
-        noise_model, pose_i_key, pose_j_key, depth_key, td_key
-    ),
-    pts_i_(pts_i), pts_j_(pts_j), td_i_(td), td_j_(td),
+    double td, const gtsam:: Matrix2 & sqrt_info, bool use_unit_sphere
+    ) : gtsam::NoiseModelFactor4<gtsam::Pose3, gtsam::Pose3, double, double>(
+        noise_model, pose_i_key, pose_j_key, depth_key, td_key),
+    pts_i_(pts_i), pts_j_(pts_j), td_i_(td), td_j_(td), sqrt_info_(sqrt_info),
     use_unit_sphere_(use_unit_sphere) 
 {
     // 初始化速度向量（z分量为0）
@@ -38,11 +37,11 @@ gtsam::Vector ProjectionOneFrameTwoCamFactor::evaluateError(
     const gtsam::Pose3& T_cam2_imu,
     const double& inv_depth,
     const double& td,
-    boost::optional<gtsam::Matrix&> H1 = boost::none,  // d(residual)/d(T_cam1_imu)
-    boost::optional<gtsam::Matrix&> H2 = boost::none,  // d(residual)/d(T_cam2_imu)
-    boost::optional<gtsam::Matrix&> H3 = boost::none,  // d(residual)/d(inv_depth)
-    boost::optional<gtsam::Matrix&> H4 = boost::none   // d(residual)/d(td)
-){
+    boost::optional<gtsam::Matrix&> H1,  // d(residual)/d(T_cam1_imu)
+    boost::optional<gtsam::Matrix&> H2,  // d(residual)/d(T_cam2_imu)
+    boost::optional<gtsam::Matrix&> H3,  // d(residual)/d(inv_depth)
+    boost::optional<gtsam::Matrix&> H4   // d(residual)/d(td)
+)const {
     using gtsam::Matrix3;
     using gtsam::Matrix23;
     using gtsam::Matrix36;
@@ -59,16 +58,18 @@ gtsam::Vector ProjectionOneFrameTwoCamFactor::evaluateError(
     // 左相机坐标系 -> IMU坐标系
     if (H1 || H3 || H4) {
         p_imu = T_cam1_imu.transformFrom(pts_i_td / inv_depth, H_transform_from);
-    } else {
-        p_imu = T_cam1_imu.transformFrom(pts_i_td / inv_depth);
     }
+    // else {
+    //     p_imu = T_cam1_imu.transformFrom(pts_i_td / inv_depth,);
+    // }
 
     // IMU坐标系 -> 右相机坐标系
     if (H2 || H3 || H4) {
         p_cam2 = T_cam2_imu.transformTo(p_imu, H_transform_to);
-    } else {
-        p_cam2 = T_cam2_imu.transformTo(p_imu);
-    }
+    } 
+    // else {
+    //     p_cam2 = T_cam2_imu.transformTo(p_imu);
+    // }
 
     // -------------------- 3. 残差计算 --------------------
     gtsam::Vector2 residual;
@@ -93,10 +94,13 @@ gtsam::Vector ProjectionOneFrameTwoCamFactor::evaluateError(
         residual = (gtsam::Vector2() << p_cam2.x() * z_inv, p_cam2.y() * z_inv).finished() 
                     - pts_j_td.head<2>();
 
+        residual = sqrt_info_ * residual;
+
         // 投影雅可比
         if (H1 || H2 || H3 || H4) {
             J_proj << z_inv, 0.0, -p_cam2.x() * z_inv * z_inv,
                         0.0, z_inv, -p_cam2.y() * z_inv * z_inv;
+            J_proj = sqrt_info_ * J_proj;
         }
     }
 
@@ -104,7 +108,8 @@ gtsam::Vector ProjectionOneFrameTwoCamFactor::evaluateError(
     if (H1 || H2 || H3 || H4) {
         // 4.1 左相机位姿导数 (H1)
         if (H1) {
-            *H1 = J_proj * H_transform_from;
+            // *H1 = J_proj * H_transform_from;
+            *H1 = J_proj * T_cam2_imu.rotation().transpose() * H_transform_from;
         }
 
         // 4.2 右相机位姿导数 (H2)
@@ -114,15 +119,16 @@ gtsam::Vector ProjectionOneFrameTwoCamFactor::evaluateError(
 
         // 4.3 逆深度导数 (H3)
         if (H3) {
+            // const Vector3 J_depth = -H_transform_from.leftCols<3>() * pts_i_td / (inv_depth * inv_depth);
+            // *H3 = (J_proj * J_depth).head<2>();
             const Vector3 J_depth = -H_transform_from.leftCols<3>() * pts_i_td / (inv_depth * inv_depth);
-            *H3 = J_proj * J_depth.head<2>();
         }
 
         // 4.4 时间偏移导数 (H4)
         if (H4) {
             const Vector3 J_td = H_transform_to.rightCols<3>() * T_cam2_imu.rotation().matrix() * velocity_j_
                                 - H_transform_from.leftCols<3>() * T_cam1_imu.rotation().matrix() * velocity_i_ / inv_depth;
-            *H4 = J_proj * J_td.head<2>();
+            *H4 = (J_proj * J_td).head<2>();
         }
     }
     return residual;

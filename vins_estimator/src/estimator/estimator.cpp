@@ -19,7 +19,6 @@
 #include <gtsam/navigation/CombinedImuFactor.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/linear/GaussianFactorGraph.h>
-#include <gtsam/linear/SchurComplement.h>
 #include <gtsam/inference/Symbol.h>
 
 
@@ -345,7 +344,7 @@ void Estimator::processMeasurements()
                         dt = curTime - accVector[i - 1].first; // Last IMU frame dt
                     else
                         dt = accVector[i].first - accVector[i - 1].first;
-                    processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second); //preintergration/ tmp would be stored in pre_integrations and tmp_pre_integrations
+                    // processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second); //preintergration/ tmp would be stored in pre_integrations and tmp_pre_integrations
                     processIMUGTSAM(dt, accVector[i].second, gyrVector[i].second);
                 }
             }

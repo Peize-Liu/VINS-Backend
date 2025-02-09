@@ -39,34 +39,45 @@ set(VINS_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src)
 
 catkin_package()
 
-add_library(vins_lib
-    src/estimator/parameters.cpp
-    src/estimator/estimator.cpp
-    src/estimator/feature_manager.cpp
-    src/factor/pose_local_parameterization.cpp
-    src/factor/projectionTwoFrameOneCamFactor.cpp
-    src/factor/projectionTwoFrameTwoCamFactor.cpp
-    src/factor/projectionOneFrameTwoCamFactor.cpp
-    src/factor/marginalization_factor.cpp
-    src/utility/utility.cpp
-    src/utility/visualization.cpp
-    src/utility/CameraPoseVisualization.cpp
-    src/initial/solve_5pts.cpp
-    src/initial/initial_aligment.cpp
-    src/initial/initial_sfm.cpp
-    src/initial/initial_ex_rotation.cpp
-    src/featureTracker/feature_tracker.cpp)
+add_library(gtsam_factor_lib
+    src/gtsam_factor/ProjectionOneFrameTwoCamFactor.cpp
+    src/gtsam_factor/ProjectionTwoFrameOneCamFactor.cpp
+    src/gtsam_factor/ProjectionTwoFrameTwoCamFactor.cpp)
 
-target_include_directories(vins_lib PUBLIC ${VINS_INCLUDE_DIR})
-target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${GTSAM_LIBRARIES})
+target_include_directories(gtsam_factor_lib PUBLIC ${VINS_INCLUDE_DIR})
+target_link_libraries(gtsam_factor_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${GTSAM_LIBRARIES})
+
+# add_library(vins_lib
+#     src/estimator/parameters.cpp
+#     src/estimator/estimator.cpp
+#     src/estimator/feature_manager.cpp
+#     src/factor/pose_local_parameterization.cpp
+#     src/factor/projectionTwoFrameOneCamFactor.cpp
+#     src/factor/projectionTwoFrameTwoCamFactor.cpp
+#     src/factor/projectionOneFrameTwoCamFactor.cpp
+#     src/factor/marginalization_factor.cpp
+#     src/gtsam_factor/ProjectionOneFrameTwoCamFactor.cpp
+#     src/gtsam_factor/ProjectionTwoFrameOneCamFactor.cpp
+#     src/gtsam_factor/ProjectionTwoFrameTwoCamFactor.cpp
+#     src/utility/utility.cpp
+#     src/utility/visualization.cpp
+#     src/utility/CameraPoseVisualization.cpp
+#     src/initial/solve_5pts.cpp
+#     src/initial/initial_aligment.cpp
+#     src/initial/initial_sfm.cpp
+#     src/initial/initial_ex_rotation.cpp
+#     src/featureTracker/feature_tracker.cpp)
+
+# target_include_directories(vins_lib PUBLIC ${VINS_INCLUDE_DIR})
+# target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${GTSAM_LIBRARIES})
 
 
-add_executable(vins_node src/rosNodeTest.cpp)
-target_link_libraries(vins_node vins_lib gtsam)
+# add_executable(vins_node src/rosNodeTest.cpp)
+# target_link_libraries(vins_node vins_lib gtsam)
 
-add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
-target_link_libraries(kitti_odom_test vins_lib gtsam)
+# add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
+# target_link_libraries(kitti_odom_test vins_lib gtsam)
 
-add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
-target_link_libraries(kitti_gps_test vins_lib gtsam)
+# add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
+# target_link_libraries(kitti_gps_test vins_lib gtsam)
 
