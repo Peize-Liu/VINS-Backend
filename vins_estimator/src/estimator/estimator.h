@@ -21,6 +21,7 @@
 #include <eigen3/Eigen/Geometry>
 
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <gtsam/nonlinear/LinearContainerFactor.h>
 #include <gtsam/navigation/ImuFactor.h>
 #include <gtsam/navigation/CombinedImuFactor.h>
 
@@ -74,6 +75,11 @@ class Estimator
     void optimizationGTSAM();
     void constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Values &initial_values);
     void updateStates(gtsam::Values &result);
+
+    //input constructed graph ; factor need to be marginalized; output marginalized factor
+    void generateGTSAMMarginalization(gtsam::NonlinearFactorGraph &graph,
+        const gtsam::Values& optimized_values , gtsam::KeyVector &marg_keys,
+        vector<gtsam::GaussianFactor::shared_ptr> marginalized_factors);
     void getGTSAMCovirance(MatrixXd &cov);
 
     bool failureDetection();
@@ -189,6 +195,5 @@ class Estimator
 
     bool initFirstPoseFlag;
     bool initThreadFlag;
-    gtsam::NonlinearFactor::shared_ptr prior_factor;
-    
+    vector<gtsam::GaussianFactor::shared_ptr> marginalized_factors_;  
 };

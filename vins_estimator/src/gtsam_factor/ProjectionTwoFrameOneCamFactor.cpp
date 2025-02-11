@@ -24,13 +24,13 @@ ProjectionTwoFrameOneCamFactor::ProjectionTwoFrameOneCamFactor(
     gtsam::Key ex_key, gtsam::Key inv_depth_key, gtsam::Key td_key,
     const gtsam::Point3& pts_i, const gtsam::Point3& pts_j,
     const gtsam::Vector2& velocity_i, const gtsam::Vector2& velocity_j,
-    double td_i, double td_j, const gtsam::Matrix2& sqrt_info,
+    double cur_dt, const gtsam::Matrix2& sqrt_info,
     bool unit_sphere) : gtsam::NoiseModelFactor5<gtsam::Pose3, gtsam::Pose3, gtsam::Pose3, double, double>(
         noise_model,pose_i_key, pose_j_key, ex_key, inv_depth_key, td_key),
     pts_i_(pts_i), pts_j_(pts_j),
     velocity_i_(gtsam::Vector3(velocity_i.x(), velocity_i.y(), 0)),
     velocity_j_(gtsam::Vector3(velocity_j.x(), velocity_j.y(), 0)),
-    td_i_(td_i), td_j_(td_j), sqrt_info_(sqrt_info),
+    td_i_(cur_dt), td_j_(cur_dt), sqrt_info_(sqrt_info),
     unit_sphere_(unit_sphere) {
 
     // 单位球面误差的正切基初始化

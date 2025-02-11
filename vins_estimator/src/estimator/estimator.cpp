@@ -17,9 +17,10 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/navigation/ImuFactor.h>
 #include <gtsam/navigation/CombinedImuFactor.h>
-#include <gtsam/nonlinear/Values.h>
 #include <gtsam/linear/GaussianFactorGraph.h>
 #include <gtsam/inference/Symbol.h>
+#include <gtsam/nonlinear/Values.h>
+#include <gtsam/nonlinear/LinearContainerFactor.h>
 
 
 #include "gtsam_factor/gtsam_factors.hpp"
@@ -508,7 +509,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     all_image_frame.insert(make_pair(header, imageframe));
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     //set a universal preintergration parameter for all frames
-    tmp_pre_integration_gtsam = new gtsam::PreintegratedImuMeasurements(,gtsam::imuBias::ConstantBias(Bas[frame_count], Bgs[frame_count]));
+    tmp_pre_integration_gtsam = new gtsam::PreintegratedImuMeasurements(gtsam_preintegration_params, 
+        gtsam::imuBias::ConstantBias(Bas[frame_count], Bgs[frame_count]));
 
     if(ESTIMATE_EXTRINSIC == 2)
     {
@@ -1430,90 +1432,61 @@ void Estimator::optimizationGTSAM(){
     if (marginalization_flag == MARGIN_OLD){
         //TOOD::Make this process a function
         gtsam::KeyVector marginal_keys = {X(0), V(0), B(0)};
-        // remove visual factor
-        gtsam::NonlinearFactorGraph factorsToMarginalize;
-        for (const auto& factor : graph) {
-            bool containsX1 = std::any_of(
-                factor->keys().begin(), 
-                factor->keys().end(), 
-                [&](gtsam::Key key) { return key == X(0) || key == V(0) || key == B(0); }
-            );
-            if (containsX1) {
-            factorsToMarginalize.push_back(factor);
-            }
-        }
-        gtsam::Values values;
-         // 3. 线性化局部子图
-        gtsam::GaussianFactor::shared_ptr llinearized_graph = factorsToRemove.linearize(value);
-         // 4. 舒尔补消元
-        gtsam::Ordering ordering;
-        ordering.push_back(variablesToMarginalize);
-        Matrix H;
-        Vector b;
-        std::tie(H, b) = linearizedGraph->hessian(ordering);
-        //hessian decomposition
-        Matrix H_marg = H.block(remainingVarsStart, remainingVarsStart, remainingVarsSize, remainingVarsSize);
-        Vector b_marg = b.segment(remainingVarsStart, remainingVarsSize);
-
-        gtsam::KeyVector remainingKeys = {X(1), V(1), B(1)};
-
-        // search features that connect with X(0), but will not be removed
-        for (feature: f_manager.feature){
-            if (feature.start_frame != 0){
-                continue;
-            }
-            if (feature.used_num < 2){
-                continue;
-            }
-            if (feature.solve_flag != 1){
-                continue;
-            }
-            remainingKeys.push_back(L(feature.feature_id));
-        }
-
-        prior_factor = std::make_shared<JacobianPrior>(remainingKeys, H_marg, b_marg);
+        generateGTSAMMarginalization(graph, result, marginal_keys, marginalized_factors_);
     } else {
         gtsam::KeyVector marginal_keys = {X(frame_count), V(frame_count), B(frame_count)};
-        // remove visual factor
-        gtsam::NonlinearFactorGraph factorsToMarginalize;
-        for (const auto& factor : graph) {
-            bool containsX1 = std::any_of(
-                factor->keys().begin(), 
-                factor->keys().end(), 
-                [&](gtsam::Key key) { return key == X(frame_count-1) || key == V(frame_count-1) || key == B(frame_count-1); }
-            );
-            if (containsX1) {
-            factorsToMarginalize.push_back(factor);
-            }
-        }
-        gtsam::Values values;
-         // 3. 线性化局部子图
-        gtsam::GaussianFactor::shared_ptr llinearized_graph = factorsToRemove.linearize(value);
-         // 4. 舒尔补消元
-        gtsam::Ordering ordering;
-        ordering.push_back(variablesToMarginalize);
-        Matrix H;
-        Vector b;
-        std::tie(H, b) = linearizedGraph->hessian(ordering);
-        //hessian decomposition
-        Matrix H_marg = H.block(remainingVarsStart, remainingVarsStart, remainingVarsSize, remainingVarsSize);
-        Vector b_marg = b.segment(remainingVarsStart, remainingVarsSize);
-        gtsam::KeyVector remainingKeys = {X(frame_count), V(frame_count), B(frame_count)};
-        // search features that connect with X(0), but will not be removed
-        for (feature: f_manager.feature){
-            if (feature.start_frame != 0){
-                continue;
-            }
-            if (feature.used_num < 2){
-                continue;
-            }
-            if (feature.solve_flag != 1){
-                continue;
-            }
-            remainingKeys.push_back(L(feature.feature_id));
-        }
-        prior_factor = std::make_shared<JacobianPrior>(remainingKeys, H_marg, b_marg);
+        generateGTSAMMarginalization(graph, result, marginal_keys, marginalized_factors_);
     }
+}
+
+// void Estimator::generateGTSAMMarginalization(gtsam::NonlinearFactorGraph &graph,
+// const gtsam::Values& marg_values, gtsam::KeyVector &marg_keys,
+//     vector<shared_ptr<gtsam::LinearContainerFactor>> marginalizedFactors){
+//     gtsam::NonlinearFactorGraph factorsToMarginalize;
+//     // collect related factors
+//     for (const auto& factor: graph){
+//         for (const auto& key: factor->keys()){
+//             if (std::find(marg_keys.begin(), marg_keys.end(), key) != marg_keys.end()){
+//                 factorsToMarginalize.push_back(factor);
+//                 break;
+//             }
+//         }
+//     }
+//     // linearize the factors
+//     gtsam::GaussianFactorGraph::shared_ptr linearized_graph = factorsToMarginalize.linearize(marg_values);
+
+//     // constrcut gaussian bayes tree and marginalize
+
+//     gtsam::Ordering ordering;
+//     for (const auto& key: marg_keys){
+//         ordering.push_back(key);
+//     }
+//     gtsam::GaussianBayesTree::shared_ptr bayes_tree = linearized_graph->eliminateMultifrontal(ordering);
+
+//     // construct prior factor
+//     gtsam::GaussianFactorGraph marginalFactors = bayes_tree->marginalFactorGraph(gtsam::Ordering());
+
+//     for (const auto& factor: marginalFactors){
+//         marginalizedFactors.push_back(gtsam::LinearContainerFactor::FromGaussianFactor(factor.get(),marg_values));
+//     }
+// }
+
+void Estimator::generateGTSAMMarginalization(gtsam::NonlinearFactorGraph &graph,
+const gtsam::Values& optimized_values , gtsam::KeyVector &marg_keys,
+    vector<gtsam::GaussianFactor::shared_ptr> marginalized_factors){
+    gtsam::GaussianFactorGraph::shared_ptr linearized = graph.linearize(optimized_values);
+    gtsam::KeyVector keys_to_keep;
+    for (const auto& key: optimized_values.keys()){
+        if (std::find(marg_keys.begin(), marg_keys.end(), key) == marg_keys.end()){
+            keys_to_keep.push_back(key);
+        }
+    }
+    auto marginal_result = linearized->eliminatePartialSequential(keys_to_keep);
+    gtsam::GaussianFactorGraph::shared_ptr marginal_factors = marginal_result.second;
+    for (const auto& factor : *marginal_factors){
+        marginalized_factors.push_back(factor);
+    }
+
 }
 
 void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Values &initial_values){
@@ -1565,8 +1538,10 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
     initial_values.insert(T(0), td);
 
     //set marginalization factor as prior
-    if( prior_factor != nullptr){
-        graph.add(prior_factor);
+    if(marginalized_factors_.size() > 0){
+        // for (auto &factor: marginalized_factors_){
+        //     graph.add(factor);
+        // }
     }
 
     //Add landmark factors
@@ -1583,41 +1558,45 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
         }
 
         initial_values.insert(L(it_per_id.feature_id), static_cast<double>(1.0 / it_per_id.estimated_depth));
+        gtsam::SharedNoiseModel pixel_noise = gtsam::noiseModel::Isotropic::Sigma(2, 1,0);
+        Eigen::Matrix2d sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
 
         if (STEREO && it_per_id.feature_per_frame.front().is_stereo){
             // extrinsic factor
-            gtsam::SharedNoiseModel pixel_noise = gtsam::noiseModel::Isotropic::Sigma(2, 1,0);
-            gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame.front().point(0), it_per_id.feature_per_frame.front().point(1), 1.0);
-            gtsam::Point3 right_p = gtsam::Point3(it_per_id.feature_per_frame.front().pointRight(0), it_per_id.feature_per_frame.front().pointRight(1), 1.0);
-            gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame.front().velocity(0), it_per_id.feature_per_frame.front().velocity(1));
-            gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame.front().velocityRight(0), it_per_id.feature_per_frame.front().velocityRight(1));
-            double cur_td = it_per_id.feature_per_frame.front().cur_td;
+            gtsam::Point3 ex_left_p = gtsam::Point3(it_per_id.feature_per_frame.front().point(0), it_per_id.feature_per_frame.front().point(1), 1.0);
+            gtsam::Point3 ex_right_p = gtsam::Point3(it_per_id.feature_per_frame.front().pointRight(0), it_per_id.feature_per_frame.front().pointRight(1), 1.0);
+            gtsam::Vector2 ex_l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame.front().velocity(0), it_per_id.feature_per_frame.front().velocity(1));
+            gtsam::Vector2 ex_r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame.front().velocityRight(0), it_per_id.feature_per_frame.front().velocityRight(1));
+            double ex_cur_td = it_per_id.feature_per_frame.front().cur_td;
             CustomGTSAMFactors::ProjectionOneFrameTwoCamFactor stereo_factor(pixel_noise, E(0), E(1), L(it_per_id.feature_id), T(0),
-                                                                    left_p, right_p, l_pix_v, r_pix_v, cur_td, false);
+                                                                    ex_left_p, ex_right_p, ex_l_pix_v, ex_r_pix_v, ex_cur_td,sqrt_info ,false);
             graph.add(stereo_factor);
 
             // stereo factors
+            gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame[0].point(0), it_per_id.feature_per_frame[0].point(1), 1.0);
+            gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[0].velocity(0), it_per_id.feature_per_frame[0].velocity(1));
+            
             for (int i =1 ; i++ ; i <= it_per_id.endFrame()){
-                gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
                 gtsam::Point3 right_p = gtsam::Point3(it_per_id.feature_per_frame[i].pointRight(0), it_per_id.feature_per_frame[i].pointRight(1), 1.0);
-                gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
                 gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocityRight(0), it_per_id.feature_per_frame[i].velocityRight(1));
-                
                 double cur_td = it_per_id.feature_per_frame[i].cur_td;
                 int32_t start_frame = it_per_id.start_frame;
-                CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise,P(start_frame),P(start_frame+1), E(0), E(1), L(it_per_id.feature_id), T(0),
-                                                                    left_p, right_p, l_pix_v, r_pix_v, cur_td, false);
+                CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise, P(start_frame),P(start_frame+1), E(0), E(1), L(it_per_id.feature_id), T(0),
+                                                                    left_p, right_p, l_pix_v, r_pix_v, cur_td, sqrt_info,false);
                 graph.add(stereo_reproject_factor);
             }
         } else {
             // monocular factors
+            gtsam::Point3 left_1 = gtsam::Point3(it_per_id.feature_per_frame[0].point(0), it_per_id.feature_per_frame[0].point(1), 1.0);
+            gtsam::Vector2 l_pix_1 = gtsam::Vector2(it_per_id.feature_per_frame[0].velocity(0), it_per_id.feature_per_frame[0].velocity(1));
+            
             for (int i =1 ; i++ ; i <= it_per_id.endFrame()){
-                gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
-                gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
+                gtsam::Point3 left_2 = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
+                gtsam::Vector2 l_pix_2 = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
                 double cur_td = it_per_id.feature_per_frame[i].cur_td;
                 int32_t start_frame = it_per_id.start_frame;
-                CustomGTSAMFactors::ProjectionTwoFrameOneCamFactor mono_reproject_factor(pixel_noise,P(start_frame),P(start_frame+1), E(0), L(it_per_id.feature_id), T(0),
-                                                                    left_p, l_pix_v, cur_td, false);
+                CustomGTSAMFactors::ProjectionTwoFrameOneCamFactor mono_reproject_factor(pixel_noise, P(start_frame),P(start_frame+i), E(0), L(it_per_id.feature_id), T(0),
+                                                                    left_1, left_2, l_pix_1,l_pix_2, cur_td, sqrt_info,false);
                 graph.add(mono_reproject_factor);
             }
         }

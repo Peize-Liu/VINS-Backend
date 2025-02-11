@@ -54,7 +54,7 @@ public:
       gtsam::Key inv_depth_key, gtsam::Key td_key,
       const gtsam::Vector3& pts_i, const gtsam::Vector3& pts_j,
       const gtsam::Vector2& velocity_i, const gtsam::Vector2& velocity_j,
-      double td_i, double td_j, const gtsam::Matrix2& sqrt_info,
+      double curt_td, const gtsam::Matrix2& sqrt_info,
       bool unit_sphere = false);
 
   gtsam::Vector evaluateError(
@@ -101,7 +101,7 @@ public:
     gtsam::Key ex_key, gtsam::Key inv_depth_key, gtsam::Key td_key,
     const gtsam::Point3& pts_i, const gtsam::Point3& pts_j,
     const gtsam::Vector2& velocity_i, const gtsam::Vector2& velocity_j,
-    double td_i, double td_j, const gtsam::Matrix2& sqrt_info,
+    double cur_td, const gtsam::Matrix2& sqrt_info,
     bool unit_sphere = false);
 
   gtsam::Vector evaluateError(
@@ -121,8 +121,6 @@ private:
   bool unit_sphere_;
   gtsam::Matrix23 tangent_base_; // 单位球面误差正切基
 };
-
-
 
 }// namespace CustomGTSAMFactors
 
