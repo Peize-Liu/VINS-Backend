@@ -120,8 +120,9 @@ gtsam::Vector ProjectionOneFrameTwoCamFactor::evaluateError(
         // 4.3 逆深度导数 (H3)
         if (H3) {
             // const Vector3 J_depth = -H_transform_from.leftCols<3>() * pts_i_td / (inv_depth * inv_depth);
-            // *H3 = (J_proj * J_depth).head<2>();
+  
             const Vector3 J_depth = -H_transform_from.leftCols<3>() * pts_i_td / (inv_depth * inv_depth);
+            *H3 = J_proj * J_depth;
         }
 
         // 4.4 时间偏移导数 (H4)

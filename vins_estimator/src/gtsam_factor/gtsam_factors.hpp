@@ -129,8 +129,9 @@ public:
   CustomIMUPreintergration(boost::shared_ptr<gtsam::PreintegratedCombinedMeasurements::Params> params,const gtsam::imuBias::ConstantBias& bias):gtsam::PreintegratedImuMeasurements(params, bias){
   };
 
-  void integrateMeasurement(const gtsam::Vector3& linear_acceleration, const gtsam::Vector3& angular_velocity, double delta_t) override {
-    gtsam::PreintegratedImuMeasurements::integrateMeasurement  (linear_acceleration, angular_velocity, delta_t);
+  void preinteragtion(const gtsam::Vector3& linear_acceleration, const gtsam::Vector3& angular_velocity, double delta_t){
+    gtsam::PreintegratedImuMeasurements::integrateMeasurement(linear_acceleration, angular_velocity, delta_t);
+    // printf("[IMU preintegration] linear_acceleration: %f %f %f, angular_velocity: %f %f %f, delta_t: %f\n", linear_acceleration(0), linear_acceleration(1), linear_acceleration(2), angular_velocity(0), angular_velocity(1), angular_velocity(2), delta_t);
     acc_buf_.push_back(linear_acceleration);
     gyr_buf_.push_back(angular_velocity);
     dt_buf_.push_back(delta_t);
@@ -143,7 +144,7 @@ public:
     }
   };
 
-  void resetIntegration() override {
+  void resetpreintergration(){
     gtsam::PreintegratedImuMeasurements::resetIntegration();
     acc_buf_.clear();
     gyr_buf_.clear();
