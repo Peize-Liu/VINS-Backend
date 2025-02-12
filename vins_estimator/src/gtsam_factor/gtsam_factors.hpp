@@ -7,6 +7,8 @@
 #include <gtsam/base/Matrix.h>
 #include <gtsam/base/Vector.h>
 #include <gtsam/inference/Symbol.h>
+#include <gtsam/navigation/ImuFactor.h>
+#include <gtsam/navigation/CombinedImuFactor.h>
 
 namespace CustomGTSAMFactors{
 
@@ -120,6 +122,37 @@ private:
   gtsam::Matrix2 sqrt_info_;
   bool unit_sphere_;
   gtsam::Matrix23 tangent_base_; // 单位球面误差正切基
+};
+
+class CustomIMUPreintergration: public gtsam::PreintegratedImuMeasurements{
+public:
+  CustomIMUPreintergration(boost::shared_ptr<gtsam::PreintegratedCombinedMeasurements::Params> params,const gtsam::imuBias::ConstantBias& bias):gtsam::PreintegratedImuMeasurements(params, bias){
+  };
+
+  void integrateMeasurement(const gtsam::Vector3& linear_acceleration, const gtsam::Vector3& angular_velocity, double delta_t) override {
+    gtsam::PreintegratedImuMeasurements::integrateMeasurement  (linear_acceleration, angular_velocity, delta_t);
+    acc_buf_.push_back(linear_acceleration);
+    gyr_buf_.push_back(angular_velocity);
+    dt_buf_.push_back(delta_t);
+  };
+
+  void rePreintegration(const gtsam::imuBias::ConstantBias& new_bias){
+    gtsam::PreintegratedImuMeasurements::resetIntegrationAndSetBias(new_bias);
+    for (int i = 0; i < acc_buf_.size(); i++){
+      gtsam::PreintegratedImuMeasurements::integrateMeasurement(acc_buf_.front(), gyr_buf_.front(), dt_buf_.front());
+    }
+  };
+
+  void resetIntegration() override {
+    gtsam::PreintegratedImuMeasurements::resetIntegration();
+    acc_buf_.clear();
+    gyr_buf_.clear();
+    dt_buf_.clear();
+  };
+protected:
+  std::list <gtsam::Vector3> acc_buf_;
+  std::list <gtsam::Vector3> gyr_buf_;
+  std::list <double> dt_buf_;
 };
 
 }// namespace CustomGTSAMFactors

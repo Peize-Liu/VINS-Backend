@@ -453,16 +453,17 @@ void Estimator::processIMUGTSAM(double dt, const Vector3d &linear_acceleration, 
 
     if (!gtsam_pre_integrations[frame_count])
     {
+        //超级加倍复合preintergration TODO:fix this!
+        pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
         gtsam::imuBias::ConstantBias prior_imu_bias(Bas[frame_count], Bgs[frame_count]);
-        gtsam_pre_integrations[frame_count] = 
-        new gtsam::PreintegratedImuMeasurements(gtsam_preintegration_params, prior_imu_bias);
+        gtsam_pre_integrations[frame_count] =  new CustomGTSAMFactors::CustomIMUPreintergration(gtsam_preintegration_params, prior_imu_bias);
     }
     if (frame_count != 0)
     {
-        // pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
+        pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
         gtsam_pre_integrations[frame_count]->integrateMeasurement(linear_acceleration, angular_velocity, dt);
         //if(solver_flag != NON_LINEAR)
-            // tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
+            tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
             tmp_pre_integration_gtsam->integrateMeasurement(linear_acceleration, angular_velocity, dt);
         dt_buf[frame_count].push_back(dt);
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
@@ -509,7 +510,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     all_image_frame.insert(make_pair(header, imageframe));
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     //set a universal preintergration parameter for all frames
-    tmp_pre_integration_gtsam = new gtsam::PreintegratedImuMeasurements(gtsam_preintegration_params, 
+    tmp_pre_integration_gtsam = new CustomGTSAMFactors::CustomIMUPreintergration(gtsam_preintegration_params, 
         gtsam::imuBias::ConstantBias(Bas[frame_count], Bgs[frame_count]));
 
     if(ESTIMATE_EXTRINSIC == 2)
@@ -519,7 +520,16 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         {
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
-            if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
+            gtsam::Quaternion q_delta = gtsam_pre_integrations[frame_count]->deltaRij().toQuaternion();
+            // if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
+            // {
+            //     ROS_WARN("initial extrinsic rotation calib success");
+            //     ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
+            //     ric[0] = calib_ric;
+            //     RIC[0] = calib_ric;
+            //     ESTIMATE_EXTRINSIC = 1;
+            // }
+            if (initial_ex_rotation.CalibrationExRotation(corres, q_delta, calib_ric))
             {
                 ROS_WARN("initial extrinsic rotation calib success");
                 ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
@@ -576,6 +586,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 for (int i = 0; i <= WINDOW_SIZE; i++)
                 {
                     pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+                    gtsam_pre_integrations[i]->rePreintegration(gtsam::imuBias::ConstantBias(Vector3d::Zero(), Bgs[i]));
                 }
                 // optimization();
                 optimizationGTSAM();
@@ -831,6 +842,7 @@ bool Estimator::visualInitialAlign()
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+        gtsam_pre_integrations[i]->rePreintegration(gtsam::imuBias::ConstantBias(Vector3d::Zero(), Bgs[i]));
     }
     for (int i = frame_count; i >= 0; i--)
         Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);
@@ -1423,8 +1435,26 @@ void Estimator::optimizationGTSAM(){
     constructProblem(graph, initial_values); //构造问题
     gtsam::LevenbergMarquardtParams params;
     params.setVerbosity("ERROR");
+
+    for (const auto& factor: graph){
+        gtsam::KeyVector keys = factor->keys();
+        std::cout << "Factor is connected to keys: ";
+        for (gtsam::Key key : keys) {
+            std::cout << key << " ";
+            if (initial_values.exists(key)){
+                std::cout << "initial value exists" << std::endl;
+            } else {
+                std::cout << "initial value does not exist" << std::endl;
+            }
+
+        }
+        std::cout << std::endl;
+    }
+
+    initial_values.print("Initial Values: ");
     //optimize
     gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, params);
+    //check graph and initial values
     gtsam::Values result = optimizer.optimize();
     //update state
     updateStates(result);
@@ -1501,7 +1531,7 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
 
 
     //add PVQ factors
-    for (int i = 0; i <= frame_count + 1; i++){
+    for (int i = 0; i <= frame_count; i++){
         gtsam::Pose3 pose = gtsam::Pose3(gtsam::Rot3(Rs[i]), gtsam::Point3(Ps[i]));
         initial_values.insert(X(i), pose);
         if(USE_IMU){
@@ -1517,7 +1547,7 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
         for (int i = 0; i < frame_count; i++){
             int j = i + 1;
 
-            gtsam::PreintegratedImuMeasurements *preint_imu = gtsam_pre_integrations[j];
+            CustomGTSAMFactors::CustomIMUPreintergration *preint_imu = gtsam_pre_integrations[j];
             gtsam::imuBias::ConstantBias bias(Bas[i], Bgs[i]);
             gtsam::imuBias::ConstantBias bias_next(Bas[j], Bgs[j]);
             gtsam::Pose3 pose_i = initial_values.at<gtsam::Pose3>(X(i));
@@ -1537,7 +1567,7 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
     //Set DT as prior
     initial_values.insert(T(0), td);
 
-    //set marginalization factor as prior
+    //set marginalization factor as prior TODO:
     if(marginalized_factors_.size() > 0){
         // for (auto &factor: marginalized_factors_){
         //     graph.add(factor);
@@ -1545,7 +1575,7 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
     }
 
     //Add landmark factors
-    for (auto &it_per_id : f_manager.feature){
+     for (auto &it_per_id : f_manager.feature){
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (it_per_id.used_num < 4){
             continue;

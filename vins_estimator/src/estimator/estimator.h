@@ -41,6 +41,8 @@
 #include "factor/projectionOneFrameTwoCamFactor.h"
 #include "featureTracker/feature_tracker.h"
 
+#include "gtsam_factor/gtsam_factors.hpp"
+
 
 class Estimator
 {
@@ -142,7 +144,8 @@ class Estimator
     double Headers[(WINDOW_SIZE + 1)];
 
     IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];
-    gtsam::PreintegratedImuMeasurements *gtsam_pre_integrations[WINDOW_SIZE + 1];
+    // gtsam::PreintegratedImuMeasurements *gtsam_pre_integrations[WINDOW_SIZE + 1];
+    CustomGTSAMFactors::CustomIMUPreintergration* gtsam_pre_integrations[(WINDOW_SIZE + 1)];
     Vector3d acc_0, gyr_0;
 
     vector<double> dt_buf[(WINDOW_SIZE + 1)];
@@ -182,7 +185,7 @@ class Estimator
 
     map<double, ImageFrame> all_image_frame;
     IntegrationBase *tmp_pre_integration;
-    gtsam::PreintegratedImuMeasurements* tmp_pre_integration_gtsam;
+    CustomGTSAMFactors::CustomIMUPreintergration* tmp_pre_integration_gtsam;
 
     boost::shared_ptr<gtsam::PreintegratedCombinedMeasurements::Params> gtsam_preintegration_params = nullptr;
 

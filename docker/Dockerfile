@@ -18,6 +18,7 @@ RUN   if [ "x$(nproc)" = "x1" ] ; then export USE_PROC=1 ; \
       git \
       wget \
       unzip \
+      gdb \
       python3-rosdep \
       python3-rosinstall \
       python3-rosinstall-generator \
