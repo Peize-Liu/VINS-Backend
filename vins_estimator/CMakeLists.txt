@@ -85,4 +85,3 @@ target_link_libraries(kitti_odom_test vins_lib gtsam gtsam_factor_lib)
 
 add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
 target_link_libraries(kitti_gps_test vins_lib gtsam gtsam_factor_lib)
-

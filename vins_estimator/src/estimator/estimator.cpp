@@ -461,7 +461,7 @@ void Estimator::processIMUGTSAM(double dt, const Vector3d &linear_acceleration, 
     if (frame_count != 0)
     {
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
-        gtsam_pre_integrations[frame_count]->integrateMeasurement(linear_acceleration, angular_velocity, dt);
+        gtsam_pre_integrations[frame_count]->preinteragtion(linear_acceleration, angular_velocity, dt);
         //if(solver_flag != NON_LINEAR)
             tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
             tmp_pre_integration_gtsam->integrateMeasurement(linear_acceleration, angular_velocity, dt);
@@ -1435,23 +1435,8 @@ void Estimator::optimizationGTSAM(){
     constructProblem(graph, initial_values); //构造问题
     gtsam::LevenbergMarquardtParams params;
     params.setVerbosity("ERROR");
-
-    for (const auto& factor: graph){
-        gtsam::KeyVector keys = factor->keys();
-        std::cout << "Factor is connected to keys: ";
-        for (gtsam::Key key : keys) {
-            std::cout << key << " ";
-            if (initial_values.exists(key)){
-                std::cout << "initial value exists" << std::endl;
-            } else {
-                std::cout << "initial value does not exist" << std::endl;
-            }
-
-        }
-        std::cout << std::endl;
-    }
-
-    initial_values.print("Initial Values: ");
+    graph.print("graph");
+    initial_values.print("initial values");
     //optimize
     gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, params);
     //check graph and initial values
@@ -1542,22 +1527,6 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
         }
     }
 
-    //IMU preintergration factor
-    if(USE_IMU){
-        for (int i = 0; i < frame_count; i++){
-            int j = i + 1;
-
-            CustomGTSAMFactors::CustomIMUPreintergration *preint_imu = gtsam_pre_integrations[j];
-            gtsam::imuBias::ConstantBias bias(Bas[i], Bgs[i]);
-            gtsam::imuBias::ConstantBias bias_next(Bas[j], Bgs[j]);
-            gtsam::Pose3 pose_i = initial_values.at<gtsam::Pose3>(X(i));
-            gtsam::Pose3 pose_j = initial_values.at<gtsam::Pose3>(X(j));
-            gtsam::Vector3 vel_i = initial_values.at<gtsam::Vector3>(V(i));
-            gtsam::Vector3 vel_j = initial_values.at<gtsam::Vector3>(V(j));
-            graph.add(gtsam::ImuFactor(X(i), V(i), X(j), V(j), B(i), *preint_imu));
-        }
-    }
-
     //set extrinsic parameters as prior and optimize
     for (int i = 0; i < NUM_OF_CAM; i++){
         gtsam::Pose3 pose = gtsam::Pose3(gtsam::Rot3(ric[i]), gtsam::Point3(tic[i]));
@@ -1574,22 +1543,28 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
         // }
     }
 
-    //Add landmark factors
-     for (auto &it_per_id : f_manager.feature){
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (it_per_id.used_num < 4){
-            continue;
+        //IMU preintergration factor
+    if(USE_IMU){
+        for (int i = 0; i < frame_count; i++){
+            int j = i + 1;
+            CustomGTSAMFactors::CustomIMUPreintergration *preint_imu = gtsam_pre_integrations[i];
+            // preint_imu->print("Preintegration");
+            graph.add(gtsam::ImuFactor(X(i), V(i), X(j), V(j), B(i), *preint_imu));
         }
-        if (it_per_id.start_frame != 0){
-            continue;
-        }
-        if (it_per_id.solve_flag != 1){
-            continue;
-        }
+    }
 
+    //Add landmark factors
+    for (auto &it_per_id : f_manager.feature){
+        if (it_per_id.feature_per_frame.size()< 4){
+            continue;
+        }
         initial_values.insert(L(it_per_id.feature_id), static_cast<double>(1.0 / it_per_id.estimated_depth));
-        gtsam::SharedNoiseModel pixel_noise = gtsam::noiseModel::Isotropic::Sigma(2, 1,0);
+        gtsam::SharedNoiseModel pixel_noise = gtsam::noiseModel::Isotropic::Sigma(2, 1.0);
         Eigen::Matrix2d sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
+//TODO rename value more understandable
+        if (it_per_id.start_frame + it_per_id.feature_per_frame.size() -1 > 10){
+            // printf("[Error] outof inde start {%d}  lenth {%d}\n",it_per_id.start_frame,it_per_id.feature_per_frame.size());
+        }
 
         if (STEREO && it_per_id.feature_per_frame.front().is_stereo){
             // extrinsic factor
@@ -1606,28 +1581,41 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
             gtsam::Point3 left_p = gtsam::Point3(it_per_id.feature_per_frame[0].point(0), it_per_id.feature_per_frame[0].point(1), 1.0);
             gtsam::Vector2 l_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[0].velocity(0), it_per_id.feature_per_frame[0].velocity(1));
             
-            for (int i =1 ; i++ ; i <= it_per_id.endFrame()){
-                gtsam::Point3 right_p = gtsam::Point3(it_per_id.feature_per_frame[i].pointRight(0), it_per_id.feature_per_frame[i].pointRight(1), 1.0);
-                gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocityRight(0), it_per_id.feature_per_frame[i].velocityRight(1));
-                double cur_td = it_per_id.feature_per_frame[i].cur_td;
-                int32_t start_frame = it_per_id.start_frame;
-                CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise, P(start_frame),P(start_frame+1), E(0), E(1), L(it_per_id.feature_id), T(0),
-                                                                    left_p, right_p, l_pix_v, r_pix_v, cur_td, sqrt_info,false);
-                graph.add(stereo_reproject_factor);
+            for(int i =1 ; i < it_per_id.feature_per_frame.size() ; i++){
+                if (it_per_id.feature_per_frame[i].is_stereo){
+                    gtsam::Point3 right_p = gtsam::Point3(it_per_id.feature_per_frame[i].pointRight(0), it_per_id.feature_per_frame[i].pointRight(1), 1.0);
+                    gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocityRight(0), it_per_id.feature_per_frame[i].velocityRight(1));
+                    double cur_td = it_per_id.feature_per_frame[i].cur_td;
+                    int32_t start_frame = it_per_id.start_frame;
+                    CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise, X(start_frame), X(start_frame+1), E(0), E(1), L(it_per_id.feature_id), T(0),
+                                                                        left_p, right_p, l_pix_v, r_pix_v, cur_td, sqrt_info,false);
+                    // printf("[Two frame Two cam Add %d and  %d]\n",start_frame,start_frame+i);
+                    graph.add(stereo_reproject_factor);
+                } else {
+                    gtsam::Point3 left_2 = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
+                    gtsam::Vector2 l_pix_2 = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
+                    double cur_td = it_per_id.feature_per_frame[i].cur_td;
+                    int32_t start_frame = it_per_id.start_frame;
+                    CustomGTSAMFactors::ProjectionTwoFrameOneCamFactor mono_reproject_factor(pixel_noise, X(start_frame), X(start_frame+i), E(0), L(it_per_id.feature_id), T(0),
+                                                                        left_p, left_2, l_pix_v, l_pix_2, cur_td, sqrt_info,false);
+                    // printf("[Two frame one cam Add %d and  %d]\n",start_frame, start_frame+i);
+                    graph.add(mono_reproject_factor);
+                }
             }
         } else {
             // monocular factors
             gtsam::Point3 left_1 = gtsam::Point3(it_per_id.feature_per_frame[0].point(0), it_per_id.feature_per_frame[0].point(1), 1.0);
             gtsam::Vector2 l_pix_1 = gtsam::Vector2(it_per_id.feature_per_frame[0].velocity(0), it_per_id.feature_per_frame[0].velocity(1));
             
-            for (int i =1 ; i++ ; i <= it_per_id.endFrame()){
+            for (int i =1 ; i < it_per_id.feature_per_frame.size(); i++){
                 gtsam::Point3 left_2 = gtsam::Point3(it_per_id.feature_per_frame[i].point(0), it_per_id.feature_per_frame[i].point(1), 1.0);
                 gtsam::Vector2 l_pix_2 = gtsam::Vector2(it_per_id.feature_per_frame[i].velocity(0), it_per_id.feature_per_frame[i].velocity(1));
                 double cur_td = it_per_id.feature_per_frame[i].cur_td;
                 int32_t start_frame = it_per_id.start_frame;
-                CustomGTSAMFactors::ProjectionTwoFrameOneCamFactor mono_reproject_factor(pixel_noise, P(start_frame),P(start_frame+i), E(0), L(it_per_id.feature_id), T(0),
-                                                                    left_1, left_2, l_pix_1,l_pix_2, cur_td, sqrt_info,false);
+                CustomGTSAMFactors::ProjectionTwoFrameOneCamFactor mono_reproject_factor(pixel_noise, X(start_frame), X(start_frame+i), E(0), L(it_per_id.feature_id), T(0),
+                                                                    left_1, left_2, l_pix_1, l_pix_2, cur_td, sqrt_info,false);
                 graph.add(mono_reproject_factor);
+                // printf("[MONO Two frame one cam Add %d and  %d]\n",start_frame,start_frame+i);
             }
         }
     }
@@ -1664,16 +1652,16 @@ void Estimator::updateStates(gtsam::Values &result){
 
     //update landmarks
     for (auto &it_per_id : f_manager.feature){
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (it_per_id.used_num < 4){
             continue;
         }
-        if (it_per_id.start_frame != 0){
-            continue;
-        }
-        if (it_per_id.solve_flag != 1){
-            continue;
-        }
         it_per_id.estimated_depth = 1.0 / result.at<double>(L(it_per_id.feature_id));
+        if (it_per_id.estimated_depth < 0){
+            it_per_id.solve_flag = 2;
+        } else {
+            it_per_id.solve_flag = 1;
+        }
     }
 }
 
