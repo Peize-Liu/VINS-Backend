@@ -1587,7 +1587,7 @@ void Estimator::constructProblem(gtsam::NonlinearFactorGraph &graph, gtsam::Valu
                     gtsam::Vector2 r_pix_v = gtsam::Vector2(it_per_id.feature_per_frame[i].velocityRight(0), it_per_id.feature_per_frame[i].velocityRight(1));
                     double cur_td = it_per_id.feature_per_frame[i].cur_td;
                     int32_t start_frame = it_per_id.start_frame;
-                    CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise, X(start_frame), X(start_frame+1), E(0), E(1), L(it_per_id.feature_id), T(0),
+                    CustomGTSAMFactors::ProjectionTwoFrameTwoCamFactor stereo_reproject_factor(pixel_noise, X(start_frame), X(start_frame+i), E(0), E(1), L(it_per_id.feature_id), T(0),
                                                                         left_p, right_p, l_pix_v, r_pix_v, cur_td, sqrt_info,false);
                     // printf("[Two frame Two cam Add %d and  %d]\n",start_frame,start_frame+i);
                     graph.add(stereo_reproject_factor);
