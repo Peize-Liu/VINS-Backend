@@ -9,6 +9,7 @@
 
 #include "estimator.h"
 #include "../utility/visualization.h"
+#include "ceres/covariance.h"
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -1132,6 +1133,31 @@ void Estimator::optimization()
 
     double2vector();
     //printf("frame_count: %d \n", frame_count);
+
+    //Test output covirance
+
+    ceres::Covariance::Options cov_options;
+    // cov_options.null_space_rank = 4;  // 假设 Hessian 矩阵的秩亏为 4（可根据具体问题调整）
+    cov_options.min_reciprocal_condition_number = 1e-15;  // 降低条件数阈值
+    cov_options.apply_loss_function = true;  // 考虑损失函数的影响
+    ceres::Covariance covariance(cov_options);
+
+    // 定义需要计算协方差的参数块
+    std::vector<std::pair<const double*, const double*>> covariance_blocks;
+    covariance_blocks.emplace_back(para_Pose[10], para_Pose[10]);  // 自身协方差
+    // covariance_blocks.emplace_back(parameter_block_1, parameter_block_2);  // 交叉协方差
+
+    // 计算协方差
+    problem.SetParameterBlockConstant(para_Pose[0]);
+    if (!covariance.Compute(covariance_blocks, &problem)) {
+        std::cerr << "Failed to compute covariance." << std::endl;
+    }
+
+    // 提取协方差
+    double covariance_matrix[SIZE_POSE * SIZE_POSE];
+    covariance.GetCovarianceBlock(para_Pose[10], para_Pose[10], covariance_matrix);
+    printf("[Debug] ceres get estimation cov at latest frame!\n");
+
 
     if(frame_count < WINDOW_SIZE)
         return;

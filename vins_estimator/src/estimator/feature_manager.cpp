@@ -294,7 +294,7 @@ void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs
             Rs[frameCnt] = RCam * ric[0].transpose(); 
             Ps[frameCnt] = -RCam * ric[0].transpose() * tic[0] + PCam;
 
-            Eigen::Quaterniond Q(Rs[frameCnt]);
+             Eigen::Quaterniond Q(Rs[frameCnt]);
             //cout << "frameCnt: " << frameCnt <<  " pnp Q " << Q.w() << " " << Q.vec().transpose() << endl;
             //cout << "frameCnt: " << frameCnt << " pnp P " << Ps[frameCnt].transpose() << endl;
         }
